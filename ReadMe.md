@@ -33,4 +33,3 @@ CREATE USER 'recipe_app'@'localhost' IDENTIFIED BY 'choose-a-private-password';
 GRANT SELECT ON recipe_kb.* TO 'recipe_app'@'localhost';
 ```
 
-The terminal example only reads data, so it needs only `SELECT`. If the backend later saves recipe requests, grant it only the additional permissions it needs, such as `INSERT` and `UPDATE` on `recipe_requests`.
