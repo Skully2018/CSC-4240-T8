@@ -1,0 +1,7 @@
+# Local database credentials
+.env
+
+# Python environment and cache files
+.venv/
+__pycache__/
+*.py[cod]
