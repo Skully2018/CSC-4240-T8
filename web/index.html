@@ -5,6 +5,7 @@
 <header><div class="brand"><span aria-hidden="true" class="mark">✳</span> RMR</div><span class="brand-name">Roommate Meal Resolutions</span></header>
 <main>
 <p id="save-status" class="hint" role="status"></p><div id="entry"><section class="intro"><h1>What’s for dinner?</h1><p>Find a recipe that works for the people at your table.</p></section>
+<p><button type="button" class="how-link">How recommendations work</button></p>
 <div class="household-layout"><form id="house"><div class="sectionhead"><h2>Your roommates</h2><button type="button" class="light" id="add">+ Add roommate</button></div>
 <p class="hint">Separate ingredient names with commas.</p>
 <div id="people"></div>
@@ -13,14 +14,17 @@
 <aside id="favorites" aria-labelledby="fav-title"><h2 id="fav-title">Saved recipes</h2>
 <p class="hint">Saved bookmarks. Run a fresh search to check a recipe against your current household.</p>
 <div id="bookmarks"></div></aside></div></div>
-<section id="results" hidden class="results" aria-labelledby="results-title"><button type="button" id="edit">← Edit household</button><div class="sectionhead"><h1 tabindex="-1" id="results-title">Recipe matches</h1><span class="source">TheMealDB</span></div>
+<section id="results" hidden class="results" aria-labelledby="results-title"><div class="sectionhead"><button type="button" id="edit">← Edit household</button><button type="button" class="how-link">How recommendations work</button></div><div class="sectionhead"><h1 tabindex="-1" id="results-title">Recipe matches</h1><span class="source">TheMealDB</span></div>
 <p id="status" role="status" aria-live="polite">Enter your household’s preferences, then choose Find recipes.</p>
+<ul class="score-legend" aria-label="Happiness score colors"><li><strong class="happiness-score score-low">Below 35%</strong> low fit</li><li><strong class="happiness-score score-medium">35–60%</strong> partial fit</li><li><strong class="happiness-score score-high">Above 60%</strong> strong fit</li></ul>
 <p id="screen-note" class="hint" hidden>Ingredient screening uses the recipe text. Check product labels and kitchen cross-contact before cooking.</p><div id="cards"></div><section id="review-section" hidden><h2>Ingredients to verify</h2><p>Check the items flagged on each recipe before deciding whether to cook it.</p><div id="review-cards"></div></section></section>
+<section id="happiness-page" hidden class="happiness-page" aria-labelledby="happiness-title"><button type="button" id="happiness-back">← Back</button><div class="intro"><h1 tabindex="-1" id="happiness-title">How recommendations work</h1><p>RMR compares recipe ingredients with the household’s taste preferences and uses those matches to order recipe suggestions.</p></div><article class="info-card"><h2>Taste and restrictions</h2><p>Ingredient preferences help identify meals that suit the people at the table. Add a few clear likes for each roommate to get more useful matches. Soft dislikes can lower a recipe’s fit when they appear.</p><p>Allergies, diet rules, and ingredients in “Always exclude” are checked before recipe ranking. Those restrictions can remove a recipe even when its other ingredients match the household’s tastes.</p></article><article class="info-card"><h2>Scores and feedback</h2><p>Colored percentages summarize how well a recipe fits the listed household preferences. They are estimates based on the recipe information provided by TheMealDB, so check ingredients and product labels before cooking.</p><p>Household ratings on recipes already tried can also help order future results. Ratings are saved separately from bookmarks, and some unrated recipes remain in the results so the household can discover new meals.</p><p class="score-legend-note">Score colors: red is a low fit, yellow is a partial fit, and green is a strong fit.</p></article></section>
 </main>
 <template id="profile"><fieldset><legend>Roommate</legend>
 <div class="row"><label>Name<input class="name" maxlength="50" placeholder="First name or nickname" required></label><label>Diet<select class="diet"><option>Any</option><option>Vegetarian</option><option>Vegan</option><option>Mediterranean</option><option>Pescatarian</option><option>Gluten Free</option></select></label></div>
-<label>Likes<input class="likes" placeholder="e.g. mushrooms, basil"></label>
-<label>Dislikes / ingredients to exclude<input class="avoid" placeholder="e.g. olives, onions"></label>
+<div class="taste-header"><strong>Taste preferences</strong><button type="button" class="add-preference">+ Add ingredient</button></div>
+<p class="hint">Rate each ingredient from strong dislike (−2) to strong like (+2). Use “Always exclude” for a hard exclusion.</p><div class="preferences"></div>
+<label>Always exclude (hard filter)<input class="avoid" placeholder="e.g. olives, onions"></label>
 <details class="allergy"><summary>Food allergies</summary><p>Supported groups include milk, eggs, peanuts, tree nuts, soy, sesame, wheat, fish and shellfish. You can also enter individual ingredients. For other allergy names we check the words you enter and flag recipes for individual review.</p><label>Allergies to exclude<input class="allergies" placeholder="e.g. peanuts"></label></details>
 <button class="remove" type="button">Remove roommate</button>
 </fieldset></template>

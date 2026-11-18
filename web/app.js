@@ -17,11 +17,26 @@ function invalidate() {
 function addPerson(focus) {
   const field = $("profile").content.firstElementChild.cloneNode(true);
   people.append(field);
+  field.querySelector(".add-preference").onclick = () => addPreference(field);
   field.querySelector(".remove").onclick = () => {
     field.remove(); numberProfiles(); invalidate(); saveHousehold(); $("add").focus();
   };
   numberProfiles();
+  addPreference(field);
   if (focus) { invalidate(); saveHousehold(); field.querySelector(".name").focus(); }
+}
+function addPreference(field, ingredient = "", strength = 1) {
+  const row = node("div", undefined, "preference-row");
+  const input = node("input"); input.type="text"; input.maxLength=80;
+  input.placeholder="Ingredient, e.g. mushrooms"; input.value=ingredient;
+  input.setAttribute("aria-label","Ingredient preference");
+  const select=node("select"); select.setAttribute("aria-label","Preference strength");
+  for (const [value,label] of [[-2,"Strong dislike (−2)"],[-1,"Dislike (−1)"],[0,"Neutral (0)"],[1,"Like (+1)"],[2,"Strong like (+2)"]]) {
+    const option=node("option",label); option.value=value; option.selected=Number(strength)===value; select.append(option);
+  }
+  const remove=action("Remove",()=>{row.remove();saveHousehold();invalidate();});
+  remove.className="remove-preference";
+  row.append(input,select,remove); field.querySelector(".preferences").append(row);
 }
 function numberProfiles() {
   [...people.children].forEach((field,i) => {
@@ -39,11 +54,17 @@ function node(tag, text, cls) {
 function action(label, fn, cls) {
   const btn = node("button",label,cls); btn.type="button"; btn.onclick=fn; return btn;
 }
+function happinessBadge(value) {
+  const score=Math.round(Number(value)||0);
+  const level=score<35?"low":score<=60?"medium":"high";
+  return node("strong",score+"%","happiness-score score-"+level);
+}
 function render() {
   cards.replaceChildren();
   const list = chosen ? [chosen] : recipes;
   $("status").textContent = chosen ? "Your household chose " + chosen.title + "." :
-    list.length ? list.length + (list.length === 1 ? " recipe matches" : " recipes match") + " your household. Best match first." :
+    list.length && list.every(r=>r.happiness===0) ? "No recipe has a positive household taste score. Add ingredients your roommates like or adjust preference strengths to improve the ranking." :
+    list.length ? list.length + (list.length === 1 ? " recipe ranked" : " recipes ranked") + " by household taste fit. Best match first." :
     "You’ve skipped every match. Adjust your preferences or start a new search.";
   if (!chosen && !recipes.length && reviewRecipes.length)
     $("status").textContent = "Review the flagged ingredients in the recipes below.";
@@ -58,11 +79,16 @@ function render() {
     }
     const body=node("div",undefined,"content");
     body.append(node("div",[r.area,r.category].filter(Boolean).join(" · "),"meta"),node("h3",r.title));
+    const householdScore=node("p",undefined,"happiness");
+    householdScore.append(node("span","Household happiness: "),happinessBadge(r.happiness),node("span"," household fit"));
+    body.append(householdScore);
     const reasons=node("ul",undefined,"reasons");
     for(const p of r.reasons) {
-      let why=p.total ? (p.matched.length ? "likes " + p.matched.join(", ") : "no listed likes matched") : "no likes specified";
+      let why=p.total ? (p.matched.length ? "matched " + p.matched.join(", ") : "no listed preferences matched") : "no preferences specified";
       if(p.diet!=="Any") why+=" · fits "+p.diet.toLowerCase()+" filter";
-      reasons.append(node("li",p.name+" — "+why));
+      const reason=node("li");
+      reason.append(document.createTextNode(p.name+" — "+why+" · "),happinessBadge(p.happiness),document.createTextNode(" happiness"));
+      reasons.append(reason);
     }
     body.append(reasons);
     for (const note of r.review_notes || []) body.append(node("p", note, "review-note"));
@@ -84,38 +110,61 @@ function render() {
     }
     actions.append(action(favorites.some(f=>f.id===r.id) ? "Remove favorite" : "Save favorite",
       ()=>toggleFavorite(r)));
+    const ratingRow=node("div",undefined,"rating-row");
+    const savedRating=getRating(r.id);
+    const ratingSelect=node("select"); ratingSelect.setAttribute("aria-label","Rate this recipe from 1 to 5 stars");
+    const emptyRating=node("option","Rate this recipe"); emptyRating.value=""; ratingSelect.append(emptyRating);
+    for(let value=1;value<=5;value++){
+      const option=node("option","★".repeat(value)+" ("+value+")");
+      option.value=value; option.selected=Number(savedRating?.score)===value; ratingSelect.append(option);
+    }
+    ratingRow.append(ratingSelect,action(savedRating?"Update rating":"Save rating",()=>{
+      if(ratingSelect.value)saveRating(r.id,Number(ratingSelect.value));
+    }));
+    if(savedRating){ratingRow.append(action("Remove rating",()=>removeRating(r.id)),node("span","Household rating: "+savedRating.score+"/5"));}
+    body.append(ratingRow);
     body.append(details,actions);card.append(body);(flagged ? $("review-cards") : cards).append(card);
   }
 }
 let hasResultsScreen = false;
-function showScreen(results) {
-  $("entry").hidden = results;
-  $("results").hidden = !results;
-  document.title = results ? "Recipe matches · RMR" : "RMR · Roommate Meal Resolutions";
+function showScreen(screen) {
+  $("entry").hidden=screen!=="entry";
+  $("results").hidden=screen!=="results";
+  $("happiness-page").hidden=screen!=="happiness";
+  document.title=screen==="results"?"Recipe matches · RMR":screen==="happiness"?"How recommendations work · RMR":"RMR · Roommate Meal Resolutions";
   window.scrollTo(0, 0);
-  if (results) $("results-title").focus();
+  if(screen==="results")$("results-title").focus();
+  else if(screen==="happiness")$("happiness-title").focus();
   else people.querySelector(".name").focus();
 }
 function syncScreen() {
   if (location.hash === "#results" && !hasResultsScreen)
     history.replaceState(null, "", location.pathname + location.search);
-  showScreen(location.hash === "#results");
+  showScreen(location.hash==="#happiness"?"happiness":location.hash==="#results"&&hasResultsScreen?"results":"entry");
 }
 window.addEventListener("popstate", syncScreen);
+window.addEventListener("hashchange",syncScreen);
+document.querySelectorAll(".how-link").forEach(button=>{
+  button.onclick=()=>{history.pushState(null,"","#happiness");syncScreen();};
+});
+$("happiness-back").onclick=()=>history.back();
 $("edit").onclick = () => history.back();
 house.oninput = () => { invalidate(); saveHousehold(); };
+house.onchange = () => { invalidate(); saveHousehold(); };
 $("add").onclick=()=>addPerson(true);
 house.onsubmit=async event=>{
   event.preventDefault();
   invalidate(); const token=generation;
   controller=new AbortController();
   const request = householdForm();
+  request.household_id=householdId();
+  request.ratings=loadRatings();
   const roommates = request.roommates;
   $("find").disabled=true; $("status").textContent="Searching TheMealDB and comparing ingredients…";
   $("screen-note").hidden = !roommates.some(p => p.allergies.length || p.diet === "Gluten Free");
   hasResultsScreen = true;
   history.pushState(null, "", "#results");
-  showScreen(true);
+  showScreen("results");
   try {
     const res=await fetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify(request),signal:controller.signal});
@@ -130,7 +179,9 @@ house.onsubmit=async event=>{
 // Keep these original keys so existing RMR households and bookmarks load after the rename.
 const HOUSE_KEY = "shared-table.household.v1";
 const FAV_KEY = "shared-table.favorites.v1";
-const fields = ["name", "diet", "likes", "avoid", "allergies"];
+const HOUSEHOLD_ID_KEY = "rmr.household-id.v1";
+const RATINGS_KEY = "rmr.recipe-ratings.v1";
+const fields = ["name", "diet", "avoid", "allergies"];
 function readSave(key, fallback) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
   catch { $("save-status").textContent = "Saved data could not be loaded in this browser."; return fallback; }
@@ -146,18 +197,44 @@ function writeSave(key, value) {
   }
 }
 function draft() {
-  const roommates = [...people.children].map(field => Object.fromEntries(
-    fields.map(k => [k, field.querySelector("."+k).value])));
+  const roommates=[...people.children].map(field=>({
+    ...Object.fromEntries(fields.map(k=>[k,field.querySelector("."+k).value])),
+    preferences:[...field.querySelectorAll(".preference-row")].map(row=>({
+      ingredient:row.querySelector("input").value.trim(),
+      strength:Number(row.querySelector("select").value),
+    })).filter(p=>p.ingredient),
+  }));
   return {roommates};
 }
 function householdForm() {
   const data = draft();
   for (const person of data.roommates) {
-    for (const field of ["likes","avoid","allergies"]) person[field] = split(person[field]);
+    for (const field of ["avoid","allergies"]) person[field] = split(person[field]);
   }
   return data;
 }
 function saveHousehold() { writeSave(HOUSE_KEY, draft()); }
+function householdId(){
+  let id=localStorage.getItem(HOUSEHOLD_ID_KEY);
+  if(!id){id=globalThis.crypto?.randomUUID?.()||"rmr-"+Date.now().toString(36)+Math.random().toString(36).slice(2);localStorage.setItem(HOUSEHOLD_ID_KEY,id);}
+  return id;
+}
+function loadRatings(){
+  try{
+    const id=householdId(),rows=JSON.parse(localStorage.getItem(RATINGS_KEY)||"[]");
+    return Array.isArray(rows)?rows.filter(r=>r?.household_id===id&&/^\d+$/.test(r.meal_id)&&Number.isInteger(r.score)&&r.score>=1&&r.score<=5):[];
+  }catch{return [];}
+}
+function getRating(mealId){return loadRatings().find(r=>r.meal_id===mealId);}
+function saveRating(mealId,score){
+  const id=householdId(),rows=loadRatings().filter(r=>r.meal_id!==mealId);
+  rows.push({household_id:id,meal_id:mealId,score,timestamp:new Date().toISOString()});
+  if(writeSave(RATINGS_KEY,rows))house.requestSubmit();
+}
+function removeRating(mealId){
+  const rows=loadRatings().filter(r=>r.meal_id!==mealId);
+  if(writeSave(RATINGS_KEY,rows))house.requestSubmit();
+}
 function loadHousehold() {
   const data = readSave(HOUSE_KEY, null);
   if (!Array.isArray(data?.roommates) || !data.roommates.length) {
@@ -167,6 +244,15 @@ function loadHousehold() {
     addPerson(false);
     for (const k of fields) {
       if (typeof profile?.[k] === "string") people.lastElementChild.querySelector("."+k).value = profile[k];
+    }
+    if(Array.isArray(profile?.preferences)){
+      people.lastElementChild.querySelector(".preferences").replaceChildren();
+      for(const pref of profile.preferences){
+        if(typeof pref?.ingredient==="string")addPreference(people.lastElementChild,pref.ingredient,[-2,-1,0,1,2].includes(pref.strength)?pref.strength:1);
+      }
+    }else if(typeof profile?.likes==="string"){
+      people.lastElementChild.querySelector(".preferences").replaceChildren();
+      split(profile.likes).forEach(ingredient=>addPreference(people.lastElementChild,ingredient,1));
     }
     if (profile?.allergies) people.lastElementChild.querySelector(".allergy").open = true;
   }
