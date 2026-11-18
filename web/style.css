@@ -47,3 +47,19 @@ a{color:var(--accent)}:focus-visible{outline:3px solid #8252aa;outline-offset:3p
 .review-note{background:#fcf3d9;border-radius:6px;padding:8px 12px}
 #review-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:18px;align-items:start}
 #save-status:empty{display:none}
+.happiness-page{max-width:850px;margin:28px auto 0}.happiness-page>.intro{padding:25px 0}
+.happiness-page>.intro h1{font-size:clamp(2.2rem,5vw,3.6rem)}
+.info-card{margin:20px 0;padding:22px;border:1px solid var(--line);border-radius:12px;background:#fff}
+.info-card h2{margin-bottom:10px}.info-card li{margin:6px 0}
+.taste-header,.preference-row,.rating-row{display:flex;align-items:center;gap:8px}
+.taste-header{justify-content:space-between;margin-top:14px}.preference-row{margin:7px 0}
+.preference-row input{flex:1;min-width:0}.preference-row select{width:auto;max-width:52%}
+.remove-preference{border:0;background:none;text-decoration:underline;padding:4px}
+.rating-row{margin-top:12px;flex-wrap:wrap}.rating-row select{width:auto;max-width:100%}
+.happiness-score{display:inline-block;padding:2px 9px;border-radius:999px;font-size:1.08rem;font-weight:800;line-height:1.45;white-space:nowrap}
+.score-low{color:#a32119;background:#fde8e7}
+.score-medium{color:#765000;background:#fff1bf}
+.score-high{color:#176b37;background:#e3f5e9}
+.score-legend{display:flex;gap:18px;flex-wrap:wrap;list-style:none;padding:0;margin:10px 0 18px;color:var(--muted);font-size:.9rem}
+.score-legend li{display:flex;align-items:center;gap:6px}.score-legend .happiness-score{font-size:.9rem}
+.score-legend-note{font-size:.9rem;color:var(--muted)}
