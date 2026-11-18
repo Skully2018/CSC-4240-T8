@@ -51,7 +51,7 @@ a{color:var(--accent)}:focus-visible{outline:3px solid #8252aa;outline-offset:3p
 .happiness-page>.intro h1{font-size:clamp(2.2rem,5vw,3.6rem)}
 .info-card{margin:20px 0;padding:22px;border:1px solid var(--line);border-radius:12px;background:#fff}
 .info-card h2{margin-bottom:10px}.info-card li{margin:6px 0}
-.taste-header,.preference-row,.rating-row{display:flex;align-items:center;gap:8px}
+.taste-header,.preference-row,.rating-row{display:grid;grid-template-columns: lfr lfr;gap:10px;}
 .taste-header{justify-content:space-between;margin-top:14px}.preference-row{margin:7px 0}
 .preference-row input{flex:1;min-width:0}.preference-row select{width:auto;max-width:52%}
 .remove-preference{border:0;background:none;text-decoration:underline;padding:4px}
