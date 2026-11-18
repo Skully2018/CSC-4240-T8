@@ -1,6 +1,10 @@
 from diet_rules import (ALIASES, GF_QUALIFIED, GF_SIMPLE, SIMPLE, base_name,
                         key, mentions, screen)
-from happiness import household_happiness, score_recipe
+from happiness import (
+    household_happiness,
+    score_recipe,
+    ranking_key
+)
 from recipe_agent import discover, fetch, household
 
 
@@ -82,29 +86,125 @@ def evaluate_happiness(row, people):
     return {'happiness': household_happiness(scores), 'roommate_scores': reasons}
 
 
-def choose_recipe(request, get=fetch, max_attempts=50):
-    if isinstance(max_attempts, bool) or not isinstance(max_attempts, int) or max_attempts < 1:
-        raise ValueError('max_attempts must be a positive integer.')
+def choose_recipe(request, get=fetch, max_attempts=50, max_results=12):
+    
+    if (isinstance(max_attempts, bool)
+            or not isinstance(max_attempts, int)
+            or max_attempts < 1):
+        raise ValueError("max_attempts must be a positive integer.")
+
+    if (isinstance(max_results, bool)
+            or not isinstance(max_results, int)
+            or max_results < 1):
+        raise ValueError("max_results must be a positive integer.")
+
     people = household(request)
+
     rejected = []
+    safe_recipes = []
     attempts = 0
+
+    # Agent 1 provides different recipe proposals
     for row in propose_recipes(get):
+
         if attempts >= max_attempts:
             break
+
         attempts += 1
-        result = validate_recipe(row, people)
-        if result['status'] != 'safe':
-            rejected.append({'id': str(row['idMeal']), 'title': row.get('strMeal'),
-                             'status': result['status'], 'reasons': result['reasons']})
-            continue  # Agent 2 requests a DIFFERENT proposal from Agent 1.
+
+        # Agent 2 validates the proposed recipe
+        validation = validate_recipe(row, people)
+
+        # Reject unsafe or uncertain recipes
+        if validation["status"] != "safe":
+            rejected.append({
+                "id": str(row["idMeal"]),
+                "title": row.get("strMeal"),
+                "status": validation["status"],
+                "reasons": validation["reasons"]
+            })
+            continue
+
+        # Calculate happiness only for accepted recipes
         score = evaluate_happiness(row, people)
-        return {'status': 'proposed', 'attempts': attempts, 'rejected': rejected,
-                'recipe': {'id': str(row['idMeal']), 'title': row['strMeal'],
-                           'category': row.get('strCategory'),
-                           'ingredients': result['ingredients'],
-                           'instructions': row['strInstructions'],
-                           'url': 'https://www.themealdb.com/meal/' + str(row['idMeal']),
-                           **score},
-                'message': 'Passed automated screening; check labels and cross-contact before serving.'}
-    return {'status': 'no_verified_recipe', 'attempts': attempts, 'rejected': rejected,
-            'recipe': None, 'message': 'No recipe passed automated screening within the search limit.'}
+
+        # Build the recipe object
+        recipe = {
+            "id": str(row["idMeal"]),
+            "title": row["strMeal"],
+            "category": row.get("strCategory"),
+            "area": row.get("strArea"),
+            "photo": row.get("strMealThumb"),
+            "ingredients": validation["ingredients"],
+            "instructions": row["strInstructions"],
+            "url": (
+                "https://www.themealdb.com/meal/"
+                + str(row["idMeal"])
+            ),
+            "happiness": score["happiness"],
+            "reasons": score["roommate_scores"],
+            "roommate_scores": score["roommate_scores"],
+            "review_notes": [],
+            "prior_rating": None
+        }
+
+        # Retain the recipe for comparison
+        safe_recipes.append(recipe)
+
+    # Rank every safe recipe by household happiness
+    def sort_key(recipe):
+        scores = [
+            p["happiness"] / 100
+            for p in recipe["roommate_scores"]
+            if any(
+                pref["strength"] > 0
+                for person in people
+                if person["name"] == p["name"]
+                for pref in person["preferences"]
+            )
+        ]
+
+        if not scores:
+            scores = [0.0]
+
+        return ranking_key(
+            scores,
+            recipe["title"],
+            recipe["id"]
+        )
+
+    safe_recipes.sort(key=sort_key)
+
+    # Return the highest-ranked recipes
+    selected = safe_recipes[:max_results]
+
+    if selected:
+        return {
+            "status": "proposed",
+            "attempts": attempts,
+            "rejected": rejected,
+            "recipes": selected,
+            "recipe": selected[0],
+            "review_recipes": [],
+            "excluded_by_rules": len(rejected),
+            "message": (
+                f"Found {len(safe_recipes)} recipes that passed "
+                "automated screening. Check labels and "
+                "cross-contact before serving."
+            )
+        }
+
+    return {
+        "status": "no_verified_recipe",
+        "attempts": attempts,
+        "rejected": rejected,
+        "recipes": [],
+        "recipe": None,
+        "review_recipes": [],
+        "excluded_by_rules": len(rejected),
+        "message": (
+            "No recipe passed automated screening "
+            "within the search limit."
+        )
+    }
+
