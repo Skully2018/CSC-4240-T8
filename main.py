@@ -9,6 +9,7 @@ from threading import Timer
 import webbrowser
 
 from recipe_agent import ProviderError, recommend
+from recipe_evaluator import choose_recipe
 
 WEB = Path(__file__).resolve().parent / "web"
 
@@ -26,20 +27,61 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    
     def do_POST(self):
-        if self.path != "/api/recommend":
-            return self.reply(404, {"message": "Unknown endpoint."})
+        # Accept requests for either Agent 1 or Agent 2
+        if self.path not in ("/api/recommend", "/api/evaluate"):
+            return self.reply(404, {
+                "message": "Unknown endpoint."
+            })
+
+        # Require JSON input
         if self.headers.get_content_type() != "application/json":
-            return self.reply(415, {"message": "Send a JSON household request."})
+            return self.reply(415, {
+                "message": "Send a JSON household request."
+            })
+
         try:
             size = int(self.headers.get("Content-Length", "0"))
+
             if not 0 < size <= 196608:
-                return self.reply(400, {"message": "Invalid request size."})
-            result = recommend(json.loads(self.rfile.read(size)))
+                return self.reply(400, {
+                    "message": "Invalid request size."
+                })
+
+            # Read household data from frontend
+            data = json.loads(self.rfile.read(size))
+
+            # AGENT 1: Existing recommendation endpoint
+            if self.path == "/api/recommend":
+                result = recommend(data)
+
+            # AGENT 2: New evaluation endpoint
+            elif self.path == "/api/evaluate":
+                result = choose_recipe(
+                    data,
+                    max_attempts=50
+                )
+
+                if result.get("recipe"):
+                    result["recipes"] = [result["recipe"]]
+                else:
+                    result["recipes"] = []
+                
+                result.setdefault("review_recipes", [])
+                result.setdefault("excluded_by_rules", 0)
+
         except ValueError as exc:
-            return self.reply(400, {"message": str(exc)})
+            return self.reply(400, {
+                "message": str(exc)
+            })
+
         except ProviderError as exc:
-            return self.reply(502, {"message": str(exc)})
+            return self.reply(502, {
+                "message": str(exc)
+            })
+
+        # Return the result to the frontend
         self.reply(200, result)
 
 
