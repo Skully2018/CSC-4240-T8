@@ -60,16 +60,9 @@ class Handler(SimpleHTTPRequestHandler):
             elif self.path == "/api/evaluate":
                 result = choose_recipe(
                     data,
-                    max_attempts=50
+                    max_attempts=50,
+                    max_results=12
                 )
-
-                if result.get("recipe"):
-                    result["recipes"] = [result["recipe"]]
-                else:
-                    result["recipes"] = []
-                
-                result.setdefault("review_recipes", [])
-                result.setdefault("excluded_by_rules", 0)
 
         except ValueError as exc:
             return self.reply(400, {
