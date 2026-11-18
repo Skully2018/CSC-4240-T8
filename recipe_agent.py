@@ -1,6 +1,5 @@
 """Stateless household recipe recommendations using TheMealDB V1."""
 from concurrent.futures import ThreadPoolExecutor
-from fractions import Fraction
 
 import json
 import re
@@ -9,6 +8,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from http.client import HTTPException
 from diet_rules import ALIASES, DIETS, GF_SIMPLE, GF_QUALIFIED, SIMPLE, base_name, key as ingredient_key, mentions, screen
+from happiness import household_happiness, matches, ranking_key, score_recipe
 
 
 class ProviderError(Exception):
@@ -39,11 +39,6 @@ def normalized(text):
                  for w in re.findall(r"[^\W_]+", text.casefold()))
 
 
-def matches(term, ingredients):
-    phrase = ingredient_key(term).split()
-    return any(name[i:i+len(phrase)] == phrase for name in ingredients for i in range(len(name)))
-
-
 def terms(data, field):
     items = data.get(field, [])
     if not isinstance(items, list) or len(items) > 20 or any(
@@ -71,7 +66,25 @@ def household(data):
         diet = row.get("diet", "Any")
         if diet not in DIETS:
             raise ValueError("Choose a diet from the menu.")
-        people.append(dict(name=name, diet=diet, **{f: terms(row, f) for f in ("likes", "avoid", "allergies")}))
+        prefs = row.get("preferences")
+        if prefs is None:
+            prefs = [{"ingredient": item, "strength": 1} for item in terms(row, "likes")]
+        if not isinstance(prefs, list) or len(prefs) > 20:
+            raise ValueError("Enter up to 20 taste preferences for each roommate.")
+        preferences = []
+        for item in prefs:
+            if not isinstance(item, dict):
+                raise ValueError("Each taste preference needs an ingredient and strength.")
+            ingredient = item.get("ingredient")
+            strength = item.get("strength")
+            if (not isinstance(ingredient, str) or not ingredient.strip() or not normalized(ingredient)
+                    or len(ingredient) > 80 or isinstance(strength, bool)
+                    or not isinstance(strength, int) or strength not in range(-2, 3)):
+                raise ValueError("Taste preferences need an ingredient and a strength from -2 to +2.")
+            preferences.append({"ingredient": ingredient.strip().casefold(), "strength": strength})
+        people.append(dict(name=name, diet=diet, preferences=preferences,
+                           likes=[p["ingredient"] for p in preferences if p["strength"] > 0],
+                           **{f: terms(row, f) for f in ("avoid", "allergies")}))
     return people
 
 
@@ -86,7 +99,26 @@ def discover(get):
 
 def recommend(data, get=fetch):
     people = household(data)
+    household_id = data.get("household_id", "")
+    if not isinstance(household_id, str) or len(household_id) > 100:
+        raise ValueError("Invalid household ID.")
+    ratings = data.get("ratings", [])
+    if not isinstance(ratings, list) or len(ratings) > 500:
+        raise ValueError("Invalid recipe ratings.")
+    rating_by_id = {}
+    for rating in ratings:
+        if not isinstance(rating, dict):
+            continue
+        meal_id, value = rating.get("meal_id"), rating.get("score")
+        if (rating.get("household_id") == household_id and isinstance(meal_id, str)
+                and meal_id.isdigit() and isinstance(value, int) and not isinstance(value, bool)
+                and 1 <= value <= 5):
+            rating_by_id[meal_id] = value
     diets = {p["diet"] for p in people}
+    has_positive_preferences = any(
+        preference["strength"] > 0
+        for person in people for preference in person["preferences"]
+    )
     unsupported = sorted({a for p in people for a in p["allergies"] if ingredient_key(a) not in ALIASES})
     has_allergies = any(p["allergies"] for p in people)
     avoid = {ingredient_key(t) for p in people for t in p["avoid"]}
@@ -114,13 +146,13 @@ def recommend(data, get=fetch):
             if mentions(text, avoid) or not screen(people, listed, category, text):
                 excluded += 1
                 continue
-            reasons, scores = [], []
-            for p in people:
-                hits = [t for t in p["likes"] if matches(t, names)]
-                reasons.append({"name": p["name"], "matched": hits, "total": len(p["likes"]), "diet": p["diet"]})
-                if p["likes"]:
-                    scores.append(Fraction(len(hits), len(p["likes"])))
-            key = (-min(scores, default=0), -sum(scores)/max(1, len(scores)), title.casefold(), mid)
+            reasons, scores = score_recipe(people, names)
+            base_key = ranking_key(scores, title, mid)
+            prior_rating = rating_by_id.get(mid)
+            if has_positive_preferences and not any(score > 0 for score in scores) and (prior_rating is None or prior_rating < 4):
+                continue
+            rating_adjustment = ((prior_rating - 3) * 0.025) if prior_rating is not None else 0
+            key = (base_key[0] - rating_adjustment, *base_key[1:])
             checks = []
             if "Gluten Free" in diets:
                 uncertain = [item["name"] for item, n in zip(ingredients, listed)
@@ -141,16 +173,27 @@ def recommend(data, get=fetch):
                 if uncertain:
                     checks.append("Check the composition and labels of " + ", ".join(uncertain) + ".")
             destination = review if checks else ranked
-            destination.append((key, dict(review_notes=checks, id=mid, title=title, category=category, area=row.get("strArea"),
+            destination.append((key, dict(happiness=household_happiness(scores), prior_rating=prior_rating,
+                                     review_notes=checks, id=mid, title=title, category=category, area=row.get("strArea"),
                                      photo=row.get("strMealThumb"), ingredients=ingredients, instructions=directions.strip(),
                                      reasons=reasons, url="https://www.themealdb.com/meal/" + mid)))
-        if len(ranked) >= 12:
+        if len(ranked) >= 12 and sum(item[1]["prior_rating"] is None for item in ranked) >= 3:
             break
     ranked.sort(key=lambda pair: pair[0])
+    selected = ranked[:12]
+    selected_ids = {recipe["id"] for _, recipe in selected}
+    already_unrated = sum(recipe["prior_rating"] is None for _, recipe in selected)
+    needed_unrated = max(0, 3 - already_unrated)
+    exploration = [item for item in ranked if item[1]["prior_rating"] is None
+                   and item[1]["id"] not in selected_ids][:needed_unrated]
+    if exploration:
+        selected = selected[:12 - len(exploration)] + exploration
     review.sort(key=lambda pair: pair[0])
     return {"review_recipes": [r for _, r in review[:12]],
-            "status": "proposed" if ranked else "needs_review" if review else "no_match", "recipes": [r for _, r in ranked[:12]],
+            "status": "proposed" if ranked else "needs_review" if review else "no_match", "recipes": [r for _, r in selected],
             "excluded_by_rules": excluded,
             "message": "" if ranked else "Recipes with ingredients to verify are listed below." if review else (
+                "No recipes matched the household’s positive taste preferences. Add more liked ingredients or adjust their strengths."
+                if has_positive_preferences else
                 f"No matches. Household restrictions excluded {excluded} recipe(s)."
                 if excluded else "No complete recipes found. Try again later.")}
