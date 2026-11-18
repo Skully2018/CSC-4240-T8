@@ -1,35 +1,121 @@
-# Roommate Recipe Agent Database
+# RMR — Roommate Meal Resolutions
 
-**Database:** MySQL 8.0+ (SQL)
+On Windows, extract the ZIP and double-click **Start RMR.cmd**. Alternatively run `py main.py` from the extracted folder. On macOS or Linux use `python3 main.py`. Requires Python 3.9+ and internet access. Leave the terminal open while using the app. If a browser tab does not open, use the local URL printed in the terminal (usually http://127.0.0.1:8765). Stop a previous copy with Ctrl+C before starting this version to reuse the same port and browser saves.
 
-## Run the terminal example with Docker
+## Find meals
 
-Install and start Docker Desktop, then set private values for `DB_PASSWORD` and `MYSQL_ROOT_PASSWORD` in `.env`. From the project folder, run:
+Enter each roommate’s name, diet, likes, allergies, and dislikes. Separate foods with commas. **Find recipes** opens a separate screen. Matches show which likes were met. Use **Ingredients to verify** to inspect uncertain ingredients. Use **Edit household** to change preferences. Household entries autosave to this browser. **Save favorite** adds a MealDB bookmark to the **Saved recipes** sidebar on the household screen. On narrow screens the shelf moves below the form. Use the same browser profile, address and port to restore saves. The original browser storage keys, `shared-table.household.v1` and `shared-table.favorites.v1`, preserve saves across the RMR rename.
 
-```bash
-docker compose -f compose.yaml up --build --abort-on-container-exit --exit-code-from app app
+## How search works
+
+RMR retrieves full MealDB recipe records in batches of four first-letter requests, filtering as it goes. It continues until at least 12 matches pass screening or it has requested all 26 letters. A recipe ID is considered once. The response shows up to 12 ranked matches and up to 12 separate review candidates. Actual counts depend on the household and online catalog. Likes affect ordering. Dislikes are hard exclusions across both lists. The ranking first maximizes the least-satisfied roommate’s fraction of likes matched, then the group average.
+
+Names are normalized for case, accents, punctuation and common plurals. A curated vocabulary handles variants including eggplant, egg plant, aubergine, brinjal, berenjena, melanzana, patlıcan and baingan. The agent checks the title, ingredient names, measures and instructions. A conflict in any of them removes the recipe before ranking. This dictionary covers named equivalents; it is not a general translator. See EQUIVALENTS in diet_rules.py to add vocabulary.
+
+## Rules used by the app
+
+| Diet | Screening rule |
+| --- | --- |
+| Any | Apply the household’s dislikes and allergy checks. |
+| Vegetarian | Exclude recognized land meat, seafood, gelatin and rennet. Permit eggs and dairy. Screen ingredients even when the category says Vegetarian. |
+| Vegan | Apply vegetarian exclusions plus recognized dairy, eggs and honey. Recognize common plant alternatives such as coconut milk. |
+| Pescatarian | Permit fish, shellfish, eggs, dairy and plant foods. Exclude recognized land meats and their stocks. |
+| Mediterranean | Use a meal-level approximation. Require two groups among vegetables, legumes, whole grains, olives/olive oil, fish/shellfish and tree nuts, including at least one of the first three. Screen out listed red or processed meat. |
+| Gluten Free | Screen recipe text for wheat, barley, rye, malt and common derivatives. Exclude ordinary bread, pasta and unlabeled oats. Recognize qualified forms such as rice flour and gluten-free oats. If the composition of another ingredient is uncertain, show it for label review. |
+
+Vegetarian, vegan and pescatarian searches also consider meals in general categories such as Side. Uncertain ingredients outside a diet-compatible category trigger review. Multiple roommates’ rules apply together. Recognized allergens and listed aliases are hard exclusions. When an allergy term has no established family rule, literal conflicts are removed and remaining candidates require review. Ingredient screening cannot verify packaged labels or kitchen cross-contact. A qualified gluten-free ingredient can still conflict with a separate wheat allergy.
+
+## Sources and maintenance
+
+- Gluten-free foods and label checks: https://celiac.org/gluten-free-living/gluten-free-foods/
+- Plant-based diets: https://www.vegansociety.com/go-vegan/definition-veganism
+- Pescatarian diet: https://health.clevelandclinic.org/pescatarian-diet
+- Mediterranean eating pattern: https://www.heart.org/en/healthy-living/healthy-eating/eat-smart/nutrition-basics/mediterranean-diet
+- Eggplant terminology: https://dictionary.cambridge.org/dictionary/english/aubergine
+- MealDB educational API and first-letter endpoint: https://www.themealdb.com/api.php
+
+## Team integration
+
+The Recipe Agent is the recommendation component inside RMR. Import `recommend` from `recipe_agent.py` or POST JSON to /api/recommend, for example:
+
+```json
+{"roommates":[{"name":"Mike","diet":"Gluten Free","likes":["rice"],"avoid":["eggplant"],"allergies":[]}]}
 ```
 
-Compose builds the Python image, starts MySQL, initializes the database from `recipe_kb.sql` on the first run, waits for MySQL to become healthy, then runs the terminal example. The database files persist in a Docker volume between runs. MySQL initialization scripts run only when that volume is first created.
+The response includes status, recipes, review_recipes, and excluded_by_rules. Each review card explains the specific checks still needed. Run `py -m unittest -v` from the project folder to check the screening and retrieval regressions.
 
-## Run the terminal example directly on your computer
+## Replace the Docker stand-in on dev
 
-1. Start the MySQL server and load `recipe_kb.sql` once. The script creates the database, tables, and demo household data.
-2. Create a MySQL app account with access to this database (see the commands below).
-3. Replace `DB_PASSWORD` in `.env` with that account's private password. `.env` is excluded from Git.
-4. Install the Python dependencies: `python3 -m pip install -r requirements.txt`.
-5. Run `python3 main.py`:
+These PowerShell steps use a fresh checkout so local work in any existing clone stays intact. You need Git, GitHub write access or a pull request, and the extracted RMR folder. The folder you copy from should contain main.py, README.md and web directly.
 
-   ```bash
-   python3 main.py
+1. Clone the team's dev branch in a parent directory of your choice.
+
+   ```powershell
+   git clone --branch dev https://github.com/Skully2018/CSC-4240-T8.git RMR-dev
+   cd RMR-dev
+   git status --short --branch
    ```
 
-The example reads household 1 by default. To read a different household, pass its ID, for example `python3 main.py 2`. Set `DB_HOST`, `DB_PORT`, `DB_USER`, and `DB_NAME` if your local MySQL connection uses different values.
+   Expect dev tracking origin/dev. If the clone reports that dev does not exist, check the branch name with your team.
 
-Create a separate, limited MySQL account from the MySQL command line (replace the sample password with the same private value used in `.env`):
+2. Set the source path and check that you selected the right folder. Replace the example path if needed.
 
-```sql
-CREATE USER 'recipe_app'@'localhost' IDENTIFIED BY 'choose-a-private-password';
-GRANT SELECT ON recipe_kb.* TO 'recipe_app'@'localhost';
-```
+   ```powershell
+   $rmrSource = "$env:USERPROFILE\Downloads\RMR"
+   Get-ChildItem -LiteralPath $rmrSource
+   ```
 
+3. Inspect the tracked setup files. The uploaded project used Dockerfile, compose.yaml, recipe_kb.sql and requirements.txt exclusively for the stand-in. If the current dev branch uses any of them for another component, retain that file. Otherwise run the removal command below. Git retains their history.
+
+   ```powershell
+   git ls-files
+   git rm --ignore-unmatch -- Dockerfile compose.yaml recipe_kb.sql requirements.txt
+   ```
+
+4. Normalize the old ReadMe.md spelling if present and copy the release into the repository root. This keeps the repository's .git folder, .gitignore and unrelated files intact. Review any overlapping work on dev when you inspect the diff.
+
+   ```powershell
+   if ((git ls-files) -ccontains 'ReadMe.md') {
+       git mv ReadMe.md rmr-readme-temp.md
+       git mv rmr-readme-temp.md README.md
+   }
+   $rmrFiles = 'README.md','Start RMR.cmd','main.py','recipe_agent.py','diet_rules.py','test_diets.py'
+   foreach ($name in $rmrFiles) {
+       Copy-Item -LiteralPath (Join-Path $rmrSource $name) -Destination . -Force
+   }
+   New-Item -ItemType Directory -Force web | Out-Null
+   foreach ($name in 'index.html','style.css','app.js') {
+       Copy-Item -LiteralPath (Join-Path $rmrSource "web\$name") -Destination web -Force
+   }
+   ```
+
+5. Test the checkout and inspect the staged change. In the app, generate a recipe, save a favorite, and return to the household screen to check the sidebar. Press Ctrl+C to stop.
+
+   ```powershell
+   py -m unittest -v
+   py main.py
+   git add -- README.md "Start RMR.cmd" main.py recipe_agent.py diet_rules.py test_diets.py web/index.html web/style.css web/app.js
+   git diff --cached --stat
+   git diff --cached
+   ```
+
+6. Commit and push once the diff contains the intended changes. If Git rejects a push because dev moved, fetch and reconcile the new commits before retrying. If dev requires pull requests, push your existing commit to a topic branch and open a pull request with dev as its base.
+
+   ```powershell
+   git commit -m "Replace Docker stand-in with RMR roommate meal app"
+   git push origin dev
+   ```
+
+   For a protected dev branch:
+
+   ```powershell
+   git switch -c rmr-ui-integration
+   git push -u origin rmr-ui-integration
+   ```
+
+## Handoff for the next UX/UI developer
+
+Two proposed features extend the current ranking. Both are future work.
+
+- **Ingredient preference strength.** Give each ingredient a labeled slider or numeric selector from −2 (strong dislike) through 0 (neutral) to +2 (strong like). Keep a separate “Always exclude” control. Preserve existing saved dislikes as exclusions during migration and keep allergies and diet rules mandatory. Apply preference weights only to eligible recipes, and retain the least-satisfied-roommate ranking so one enthusiastic rating cannot dominate the household.
+- **Rate a recipe after trying it.** Offer an optional 1–5 rating beside each result or saved recipe. Store the MealDB recipe ID, a stable roommate or household ID, score and timestamp. Let people revise or remove a rating. Use prior feedback as a small ranking adjustment after hard exclusions. Give unrated meals a neutral starting point and keep a few unfamiliar options in the results. Keep bookmarks separate from ratings so saving a dish to try does not count as liking it.

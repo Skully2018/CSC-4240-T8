@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RMR · Roommate Meal Resolutions</title><link rel="stylesheet" href="style.css"><script src="app.js" defer></script></head>
+<body>
+<header><div class="brand"><span aria-hidden="true" class="mark">✳</span> RMR</div><span class="brand-name">Roommate Meal Resolutions</span></header>
+<main>
+<p id="save-status" class="hint" role="status"></p><div id="entry"><section class="intro"><h1>What’s for dinner?</h1><p>Find a recipe that works for the people at your table.</p></section>
+<div class="household-layout"><form id="house"><div class="sectionhead"><h2>Your roommates</h2><button type="button" class="light" id="add">+ Add roommate</button></div>
+<p class="hint">Separate ingredient names with commas.</p>
+<div id="people"></div>
+<button class="primary" id="find" type="submit">Find recipes <span aria-hidden="true">→</span></button>
+</form>
+<aside id="favorites" aria-labelledby="fav-title"><h2 id="fav-title">Saved recipes</h2>
+<p class="hint">Saved bookmarks. Run a fresh search to check a recipe against your current household.</p>
+<div id="bookmarks"></div></aside></div></div>
+<section id="results" hidden class="results" aria-labelledby="results-title"><button type="button" id="edit">← Edit household</button><div class="sectionhead"><h1 tabindex="-1" id="results-title">Recipe matches</h1><span class="source">TheMealDB</span></div>
+<p id="status" role="status" aria-live="polite">Enter your household’s preferences, then choose Find recipes.</p>
+<p id="screen-note" class="hint" hidden>Ingredient screening uses the recipe text. Check product labels and kitchen cross-contact before cooking.</p><div id="cards"></div><section id="review-section" hidden><h2>Ingredients to verify</h2><p>Check the items flagged on each recipe before deciding whether to cook it.</p><div id="review-cards"></div></section></section>
+</main>
+<template id="profile"><fieldset><legend>Roommate</legend>
+<div class="row"><label>Name<input class="name" maxlength="50" placeholder="First name or nickname" required></label><label>Diet<select class="diet"><option>Any</option><option>Vegetarian</option><option>Vegan</option><option>Mediterranean</option><option>Pescatarian</option><option>Gluten Free</option></select></label></div>
+<label>Likes<input class="likes" placeholder="e.g. mushrooms, basil"></label>
+<label>Dislikes / ingredients to exclude<input class="avoid" placeholder="e.g. olives, onions"></label>
+<details class="allergy"><summary>Food allergies</summary><p>Supported groups include milk, eggs, peanuts, tree nuts, soy, sesame, wheat, fish and shellfish. You can also enter individual ingredients. For other allergy names we check the words you enter and flag recipes for individual review.</p><label>Allergies to exclude<input class="allergies" placeholder="e.g. peanuts"></label></details>
+<button class="remove" type="button">Remove roommate</button>
+</fieldset></template>
+</body></html>

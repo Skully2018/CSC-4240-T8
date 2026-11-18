@@ -1,114 +1,75 @@
-import os
-import sys
+"""Start the local-only RMR browser interface."""
+import argparse
+import errno
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import json
+from pathlib import Path
+from threading import Timer
+import webbrowser
 
-import mysql.connector
-from mysql.connector import Error
-from dotenv import load_dotenv
+from recipe_agent import ProviderError, recommend
 
-
-load_dotenv()
-
-
-def get_household_data(household_id: int) -> dict:
-    """Return household, active roommates/preferences, and pantry items."""
-    connection = mysql.connector.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", "3306")),
-        user=os.getenv("DB_USER", "recipe_app"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "recipe_kb"),
-    )
-
-    try:
-        cursor = connection.cursor(dictionary=True)
-
-        cursor.execute(
-            """SELECT household_id, household_name, currency
-               FROM households WHERE household_id = %s""",
-            (household_id,),
-        )
-        household = cursor.fetchone()
-        if household is None:
-            raise ValueError(f"No household found with id {household_id}.")
-
-        cursor.execute(
-            """SELECT r.roommate_id, r.display_name,
-                      p.preference_type, p.preference_value, p.strict, p.notes
-               FROM roommates AS r
-               LEFT JOIN roommate_preferences AS p
-                   ON p.roommate_id = r.roommate_id
-               WHERE r.household_id = %s AND r.active = TRUE
-               ORDER BY r.roommate_id, p.preference_type, p.preference_value""",
-            (household_id,),
-        )
-        roommate_rows = cursor.fetchall()
-
-        # Fold the joined rows into roommate objects with a list of preferences.
-        roommates_by_id = {}
-        for row in roommate_rows:
-            roommate = roommates_by_id.setdefault(
-                row["roommate_id"],
-                {"roommate_id": row["roommate_id"],
-                 "display_name": row["display_name"], "preferences": []},
-            )
-            if row["preference_type"] is not None:
-                roommate["preferences"].append(
-                    {"type": row["preference_type"],
-                     "value": row["preference_value"],
-                     "strict": bool(row["strict"]), "notes": row["notes"]}
-                )
-
-        cursor.execute(
-            """SELECT ingredient_name, quantity, unit
-               FROM pantry_items WHERE household_id = %s
-               ORDER BY ingredient_name""",
-            (household_id,),
-        )
-        pantry = cursor.fetchall()
-        cursor.close()
-
-        return {
-            "household": household,
-            "roommates": list(roommates_by_id.values()),
-            "pantry": pantry,
-        }
-    finally:
-        connection.close()
+WEB = Path(__file__).resolve().parent / "web"
 
 
-def display_household_data(data: dict) -> None:
-    """Print the retrieved data in a readable format for a quick workflow demo."""
-    household = data["household"]
-    print(f"\nHousehold: {household['household_name']} (ID {household['household_id']})")
-    print(f"Currency: {household['currency']}\n")
+class Handler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
 
-    print("Roommates and constraints:")
-    for roommate in data["roommates"]:
-        print(f"  - {roommate['display_name']}")
-        if not roommate["preferences"]:
-            print("      No preferences or restrictions saved")
-        for pref in roommate["preferences"]:
-            label = "strict" if pref["strict"] else "preference"
-            print(f"      {pref['type']}: {pref['value']} ({label})")
+    def reply(self, status, data):
+        body = json.dumps(data).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
-    print("\nPantry:")
-    if not data["pantry"]:
-        print("  No pantry items saved")
-    for item in data["pantry"]:
-        amount = f" — {item['quantity']} {item['unit'] or ''}" if item["quantity"] is not None else ""
-        print(f"  - {item['ingredient_name']}{amount}")
+    def do_POST(self):
+        if self.path != "/api/recommend":
+            return self.reply(404, {"message": "Unknown endpoint."})
+        if self.headers.get_content_type() != "application/json":
+            return self.reply(415, {"message": "Send a JSON household request."})
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 < size <= 196608:
+                return self.reply(400, {"message": "Invalid request size."})
+            result = recommend(json.loads(self.rfile.read(size)))
+        except ValueError as exc:
+            return self.reply(400, {"message": str(exc)})
+        except ProviderError as exc:
+            return self.reply(502, {"message": str(exc)})
+        self.reply(200, result)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", type=int, help="Use an explicit port (default: first available starting at 8765)")
+    parser.add_argument("--no-browser", action="store_true")
+    args = parser.parse_args()
+    ports = [args.port] if args.port is not None else range(8765, 8781)
+    for port in ports:
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", port), partial(Handler, directory=str(WEB)))
+            break
+        except OSError as exc:
+            if args.port is not None or exc.errno not in (errno.EADDRINUSE, 10048):
+                parser.exit(1, f"Cannot start RMR on port {port}: {exc}\n")
+    else:
+        parser.exit(1, "Ports 8765 through 8780 are busy. Close a previous server or specify --port.\n")
+    with server:
+        url = f"http://127.0.0.1:{server.server_port}"
+        if server.server_port != 8765:
+            print("Household saves are specific to the port. For saves from port 8765, close the app using it and relaunch.")
+        print(f"RMR is running at {url}. Press Ctrl+C to stop.", flush=True)
+        if not args.no_browser:
+            Timer(0.4, webbrowser.open, args=(url,)).start()
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
 
 
 if __name__ == "__main__":
-    household_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
-    try:
-        household_data = get_household_data(household_id)
-        display_household_data(household_data)
-    except (Error, ValueError) as exc:
-        print(f"Could not retrieve household data: {exc}", file=sys.stderr)
-        print(
-            "Check that MySQL is running, recipe_kb.sql has been loaded, "
-            "and DB_USER/DB_PASSWORD are correct.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    main()
