@@ -1,14 +1,40 @@
 """Household happiness scores and fair recipe ranking."""
-from diet_rules import key as ingredient_key
+from diet_rules import (
+    key as ingredient_key,
+    GROUPS,
+    ALIASES
+)
 
 MIN_WEIGHT = 0.6
 
 
 def matches(term, ingredients):
-    """Check whether an ingredient phrase occurs in recipe ingredient tokens."""
-    phrase = ingredient_key(term).split()
-    return any(name[i:i + len(phrase)] == phrase
-               for name in ingredients for i in range(len(name)))
+    """Match preferences using ingredient names and known food families."""
+
+    preference = ingredient_key(term)
+
+    # Get the food family for this preference
+    family = ALIASES.get(preference)
+
+    # Build a set of acceptable ingredient names
+    acceptable = {preference}
+
+    if family and family in GROUPS:
+        acceptable.update(GROUPS[family])
+
+    for ingredient in ingredients:
+        name = " ".join(ingredient)
+
+        # Exact or phrase-based matching
+        for item in acceptable:
+            words = item.split()
+            tokens = name.split()
+
+            for i in range(len(tokens) - len(words) + 1):
+                if tokens[i:i + len(words)] == words:
+                    return True
+
+    return False
 
 
 def person_score(matched_preferences, preferences):
