@@ -31,7 +31,7 @@ function addPreference(field, ingredient = "", strength = 1) {
   input.placeholder="Ingredient, e.g. mushrooms"; input.value=ingredient;
   input.setAttribute("aria-label","Ingredient preference");
   const select=node("select"); select.setAttribute("aria-label","Preference strength");
-  for (const [value,label] of [[-2,"Strong dislike (−2)"],[-1,"Dislike (−1)"],[0,"Neutral (0)"],[1,"Like (+1)"],[2,"Strong like (+2)"]]) {
+  for (const [value,label] of [[0,"Neutral"],[1,"Like"],[2,"Strong like"]]) {
     const option=node("option",label); option.value=value; option.selected=Number(strength)===value; select.append(option);
   }
   const remove=action("Remove",()=>{row.remove();saveHousehold();invalidate();});
@@ -55,6 +55,7 @@ function action(label, fn, cls) {
   const btn = node("button",label,cls); btn.type="button"; btn.onclick=fn; return btn;
 }
 function happinessBadge(value) {
+  if (value === null || value === undefined) return node("strong","Not scored","happiness-score score-neutral");
   const score=Math.round(Number(value)||0);
   const level=score<35?"low":score<=60?"medium":"high";
   return node("strong",score+"%","happiness-score score-"+level);
@@ -73,7 +74,7 @@ function normalizeRecipe(recipe) {
       name: p.name || "Roommate",
       matched: p.matched || [],
       total: p.total || 0,
-      happiness: p.happiness ?? p.score ?? 0,
+      happiness: p.happiness ?? p.score ?? null,
       diet: p.diet || "Any"
     }));
   }
@@ -87,7 +88,7 @@ function normalizeRecipe(recipe) {
     ? r.review_notes
     : [];
 
-  r.happiness = Number(r.happiness ?? 0);
+  r.happiness = r.happiness == null ? null : Number(r.happiness);
   r.instructions = r.instructions || "";
   r.title = r.title || "Untitled recipe";
 
@@ -97,6 +98,7 @@ function render() {
   cards.replaceChildren();
   const list = chosen ? [chosen] : recipes;
   $("status").textContent = chosen ? "Your household chose " + chosen.title + "." :
+    list.length && list.every(r=>r.happiness==null) ? "Household happiness cannot be scored yet. Add a like or strong like for at least one roommate." :
     list.length && list.every(r=>r.happiness===0) ? "No recipe has a positive household taste score. Add ingredients your roommates like or adjust preference strengths to improve the ranking." :
     list.length ? list.length + (list.length === 1 ? " recipe ranked" : " recipes ranked") + " by household taste fit. Best match first." :
     "You’ve skipped every match. Adjust your preferences or start a new search.";
@@ -114,7 +116,8 @@ function render() {
     const body=node("div",undefined,"content");
     body.append(node("div",[r.area,r.category].filter(Boolean).join(" · "),"meta"),node("h3",r.title));
     const householdScore=node("p",undefined,"happiness");
-    householdScore.append(node("span","Household happiness: "),happinessBadge(r.happiness),node("span"," household fit"));
+    householdScore.append(node("span","Household happiness: "),happinessBadge(r.happiness),
+      node("span",r.happiness==null?" (no preferences to score)":" household fit"));
     body.append(householdScore);
     const reasons=node("ul",undefined,"reasons");
     for(const p of (r.reasons || [])) {
@@ -217,8 +220,8 @@ house.onsubmit = async event => {
   showScreen("results");
 
   try {
-    // Send the household data to Agent 2
-    const res = await fetch("/api/evaluate", {
+    // Send the household data to Agent 1, which applies the household happiness formula.
+    const res = await fetch("/api/recommend", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -227,10 +230,10 @@ house.onsubmit = async event => {
       signal: controller.signal
     });
 
-    // Read Agent 2's response
+    // Read Agent 1's ranked recipe results
     const data = await res.json();
 
-    console.log("Agent 2 response:", data);
+    console.log("Agent 1 response:", data);
 
     // Ignore outdated requests
     if (token !== generation) return;
@@ -361,7 +364,7 @@ function loadHousehold() {
     if(Array.isArray(profile?.preferences)){
       people.lastElementChild.querySelector(".preferences").replaceChildren();
       for(const pref of profile.preferences){
-        if(typeof pref?.ingredient==="string")addPreference(people.lastElementChild,pref.ingredient,[-2,-1,0,1,2].includes(pref.strength)?pref.strength:1);
+        if(typeof pref?.ingredient==="string")addPreference(people.lastElementChild,pref.ingredient,[0,1,2].includes(pref.strength)?pref.strength:pref.strength<0?0:1);
       }
     }else if(typeof profile?.likes==="string"){
       people.lastElementChild.querySelector(".preferences").replaceChildren();
