@@ -8,7 +8,12 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from http.client import HTTPException
 from diet_rules import ALIASES, DIETS, GF_SIMPLE, GF_QUALIFIED, SIMPLE, base_name, key as ingredient_key, mentions, screen
-from happiness import household_happiness, matches, ranking_key, score_recipe
+from happiness import (
+    household_happiness_for_recommendations,
+    matches,
+    ranking_key_for_recommendations,
+    score_recipe_for_recommendations,
+)
 
 
 class ProviderError(Exception):
@@ -79,8 +84,8 @@ def household(data):
             strength = item.get("strength")
             if (not isinstance(ingredient, str) or not ingredient.strip() or not normalized(ingredient)
                     or len(ingredient) > 80 or isinstance(strength, bool)
-                    or not isinstance(strength, int) or strength not in range(-2, 3)):
-                raise ValueError("Taste preferences need an ingredient and a strength from -2 to +2.")
+                    or not isinstance(strength, int) or strength not in (0, 1, 2)):
+                raise ValueError("Taste preferences need an ingredient and a strength from 0 to +2.")
             preferences.append({"ingredient": ingredient.strip().casefold(), "strength": strength})
         people.append(dict(name=name, diet=diet, preferences=preferences,
                            likes=[p["ingredient"] for p in preferences if p["strength"] > 0],
@@ -146,13 +151,15 @@ def recommend(data, get=fetch):
             if mentions(text, avoid) or not screen(people, listed, category, text):
                 excluded += 1
                 continue
-            reasons, scores = score_recipe(people, names)
-            base_key = ranking_key(scores, title, mid)
+            reasons, scores = score_recipe_for_recommendations(people, names)
+            coverage = (sum(bool(reason["matched"]) for reason in reasons) / len(people)
+                        if people else 0.0)
+            base_key = ranking_key_for_recommendations(scores, title, mid, coverage)
             prior_rating = rating_by_id.get(mid)
             if has_positive_preferences and not any(score > 0 for score in scores) and (prior_rating is None or prior_rating < 4):
                 continue
             rating_adjustment = ((prior_rating - 3) * 0.025) if prior_rating is not None else 0
-            key = (base_key[0] - rating_adjustment, *base_key[1:])
+            key = (base_key[0], base_key[1] - rating_adjustment, *base_key[2:])
             checks = []
             if "Gluten Free" in diets:
                 uncertain = [item["name"] for item, n in zip(ingredients, listed)
@@ -173,7 +180,7 @@ def recommend(data, get=fetch):
                 if uncertain:
                     checks.append("Check the composition and labels of " + ", ".join(uncertain) + ".")
             destination = review if checks else ranked
-            destination.append((key, dict(happiness=household_happiness(scores), prior_rating=prior_rating,
+            destination.append((key, dict(happiness=household_happiness_for_recommendations(scores, coverage), prior_rating=prior_rating,
                                      review_notes=checks, id=mid, title=title, category=category, area=row.get("strArea"),
                                      photo=row.get("strMealThumb"), ingredients=ingredients, instructions=directions.strip(),
                                      reasons=reasons, url="https://www.themealdb.com/meal/" + mid)))
