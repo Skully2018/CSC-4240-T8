@@ -60,6 +60,7 @@ a{color:var(--accent)}:focus-visible{outline:3px solid #8252aa;outline-offset:3p
 .score-low{color:#a32119;background:#fde8e7}
 .score-medium{color:#765000;background:#fff1bf}
 .score-high{color:#176b37;background:#e3f5e9}
+.score-neutral{color:#60556c;background:#eeeaf2}
 .score-legend{display:flex;gap:18px;flex-wrap:wrap;list-style:none;padding:0;margin:10px 0 18px;color:var(--muted);font-size:.9rem}
 .score-legend li{display:flex;align-items:center;gap:6px}.score-legend .happiness-score{font-size:.9rem}
 .score-legend-note{font-size:.9rem;color:var(--muted)}
