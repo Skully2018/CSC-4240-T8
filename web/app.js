@@ -59,6 +59,40 @@ function happinessBadge(value) {
   const level=score<35?"low":score<=60?"medium":"high";
   return node("strong",score+"%","happiness-score score-"+level);
 }
+function normalizeRecipe(recipe) {
+  if (!recipe) return null;
+
+  const r = { ...recipe };
+
+  // Convert Agent 2's roommate scores into the
+  // format expected by the existing recipe cards.
+  if (!Array.isArray(r.reasons)) {
+    const scores = r.roommate_scores || [];
+
+    r.reasons = scores.map(p => ({
+      name: p.name || "Roommate",
+      matched: p.matched || [],
+      total: p.total || 0,
+      happiness: p.happiness ?? p.score ?? 0,
+      diet: p.diet || "Any"
+    }));
+  }
+
+  // Ensure the recipe contains fields render() expects.
+  r.ingredients = Array.isArray(r.ingredients)
+    ? r.ingredients
+    : [];
+
+  r.review_notes = Array.isArray(r.review_notes)
+    ? r.review_notes
+    : [];
+
+  r.happiness = Number(r.happiness ?? 0);
+  r.instructions = r.instructions || "";
+  r.title = r.title || "Untitled recipe";
+
+  return r;
+}
 function render() {
   cards.replaceChildren();
   const list = chosen ? [chosen] : recipes;
@@ -83,7 +117,7 @@ function render() {
     householdScore.append(node("span","Household happiness: "),happinessBadge(r.happiness),node("span"," household fit"));
     body.append(householdScore);
     const reasons=node("ul",undefined,"reasons");
-    for(const p of r.reasons) {
+    for(const p of (r.reasons || [])) {
       let why=p.total ? (p.matched.length ? "matched " + p.matched.join(", ") : "no listed preferences matched") : "no preferences specified";
       if(p.diet!=="Any") why+=" · fits "+p.diet.toLowerCase()+" filter";
       const reason=node("li");
@@ -95,7 +129,11 @@ function render() {
     const details=node("details"); details.open=Boolean(chosen);
     details.append(node("summary","Ingredients & instructions"));
     const ingredients=node("ul");
-    r.ingredients.forEach(item=>ingredients.append(node("li",[item.measure,item.name].filter(Boolean).join(" "))));
+    (r.ingredients || []).forEach(item => {
+      ingredients.append(
+        node("li", [item.measure, item.name].filter(Boolean).join(" "))
+      );
+    });
     const link=node("a","View on TheMealDB"); link.href=r.url; link.target="_blank"; link.rel="noopener";
     details.append(ingredients,node("p",r.instructions,"instructions"),link);
     const actions=node("div",undefined,"actions");
@@ -152,29 +190,104 @@ $("edit").onclick = () => history.back();
 house.oninput = () => { invalidate(); saveHousehold(); };
 house.onchange = () => { invalidate(); saveHousehold(); };
 $("add").onclick=()=>addPerson(true);
-house.onsubmit=async event=>{
+house.onsubmit = async event => {
   event.preventDefault();
-  invalidate(); const token=generation;
-  controller=new AbortController();
+
+  invalidate();
+  const token = generation;
+
+  controller = new AbortController();
+
   const request = householdForm();
-  request.household_id=householdId();
-  request.ratings=loadRatings();
+  request.household_id = householdId();
+  request.ratings = loadRatings();
+
   const roommates = request.roommates;
-  $("find").disabled=true; $("status").textContent="Searching TheMealDB and comparing ingredients…";
-  $("screen-note").hidden = !roommates.some(p => p.allergies.length || p.diet === "Gluten Free");
+
+  $("find").disabled = true;
+  $("status").textContent =
+    "Searching TheMealDB and comparing ingredients…";
+
+  $("screen-note").hidden = !roommates.some(
+    p => p.allergies.length || p.diet === "Gluten Free"
+  );
+
   hasResultsScreen = true;
   history.pushState(null, "", "#results");
   showScreen("results");
+
   try {
-    const res=await fetch("/api/recommend",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(request),signal:controller.signal});
-    const data=await res.json();
-    if(token!==generation)return;
-    if(!res.ok || !(data.recipes?.length || data.review_recipes?.length)) {$("status").textContent=data.message;return;}
-    recipes=data.recipes;reviewRecipes=data.review_recipes || [];render();
-  } catch(err) {
-    if(token===generation) $("status").textContent="Could not reach RMR. Check that the Python window is still open and try again.";
-  } finally { if(token===generation) $("find").disabled=false; }
+    // Send the household data to Agent 2
+    const res = await fetch("/api/evaluate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(request),
+      signal: controller.signal
+    });
+
+    // Read Agent 2's response
+    const data = await res.json();
+
+    console.log("Agent 2 response:", data);
+
+    // Ignore outdated requests
+    if (token !== generation) return;
+
+    // Handle server errors
+    if (!res.ok) {
+      $("status").textContent =
+        data.message || `Request failed (${res.status}).`;
+      return;
+    }
+
+    // Agent 2 returns one recipe.
+    // Agent 1 returns an array of recipes.
+    const accepted = Array.isArray(data.recipes)
+      ? data.recipes
+      : data.recipe
+        ? [data.recipe]
+        : [];
+
+    // Normalize recipe data for the existing UI
+    recipes = accepted
+      .map(normalizeRecipe)
+      .filter(Boolean);
+
+    reviewRecipes = (data.review_recipes || [])
+      .map(normalizeRecipe)
+      .filter(Boolean);
+
+    // Handle no matching recipes
+    if (!recipes.length && !reviewRecipes.length) {
+      $("status").textContent =
+        data.message || "No verified recipe found.";
+      return;
+    }
+
+    // Display the accepted recipes
+    render();
+
+  } catch (err) {
+    // Ignore requests canceled by changing preferences
+    if (err.name === "AbortError") return;
+
+    console.error(
+      "Recipe request or rendering failed:",
+      err
+    );
+
+    if (token === generation) {
+      $("status").textContent =
+        "Could not display recipe. Check the browser Console (F12) for details.";
+    }
+
+  } finally {
+    if (token === generation) {
+      $("find").disabled = false;
+    }
+  }
 };
 // Keep these original keys so existing RMR households and bookmarks load after the rename.
 const HOUSE_KEY = "shared-table.household.v1";
