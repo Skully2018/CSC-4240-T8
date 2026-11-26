@@ -351,5 +351,133 @@
       "clarification": true,
       "unsupported": false
     }
+  },
+  {
+    "id": "case_21",
+    "text": "Mike loves cheeseburgers.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Mike",
+          "diet": "Any",
+          "preferences": [
+            {
+              "ingredient": "beef",
+              "strength": 2
+            },
+            {
+              "ingredient": "cheese",
+              "strength": 2
+            },
+            {
+              "ingredient": "bread",
+              "strength": 2
+            }
+          ],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false,
+      "dish_suggestions": [
+        {
+          "name": "Mike",
+          "dish": "cheeseburger",
+          "ingredients": [
+            "beef",
+            "cheese",
+            "bread"
+          ],
+          "strength": 2,
+          "excluded_ingredients": []
+        }
+      ]
+    }
+  },
+  {
+    "id": "case_22",
+    "text": "Mike likes rice and loves cheeseburgers, but always excludes onions.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Mike",
+          "diet": "Any",
+          "preferences": [
+            {
+              "ingredient": "rice",
+              "strength": 1
+            },
+            {
+              "ingredient": "beef",
+              "strength": 2
+            },
+            {
+              "ingredient": "cheese",
+              "strength": 2
+            },
+            {
+              "ingredient": "bread",
+              "strength": 2
+            }
+          ],
+          "avoid": [
+            "onion"
+          ],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false,
+      "dish_suggestions": [
+        {
+          "name": "Mike",
+          "dish": "cheeseburger",
+          "ingredients": [
+            "beef",
+            "cheese",
+            "bread"
+          ],
+          "strength": 2,
+          "excluded_ingredients": []
+        }
+      ]
+    }
+  },
+  {
+    "id": "case_23",
+    "text": "Sam hates cheeseburgers.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Sam",
+          "diet": "Any",
+          "preferences": [],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": true,
+      "unsupported": false,
+      "dish_suggestions": []
+    }
+  },
+  {
+    "id": "case_24",
+    "text": "Ian likes KBBQ.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Ian",
+          "diet": "Any",
+          "preferences": [],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": true,
+      "unsupported": false,
+      "dish_suggestions": []
+    }
   }
 ]

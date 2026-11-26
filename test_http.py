@@ -44,7 +44,7 @@ class HTTPTests(unittest.TestCase):
         profiles = [{'name':'Alex', 'diet':'Vegetarian',
                      'preferences':[{'ingredient':'rice','strength':1}],
                      'avoid':['olives'], 'allergies':['peanut']}]
-        output = {'roommates':profiles, 'questions':[], 'unsupported_requests':[]}
+        output = {'roommates':profiles, 'questions':[], 'unsupported_requests':[], 'dish_suggestions':[]}
         gemini = {'candidates':[{'finishReason':'STOP', 'content':{'parts':[{'text':json.dumps(output)}]}}]}
         meals = [
             {'idMeal':'1', 'strMeal':'Peanut rice', 'strCategory':'Vegetarian',

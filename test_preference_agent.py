@@ -26,7 +26,7 @@ def response(output):
 
 class ExtractionTests(unittest.TestCase):
     def setUp(self):
-        self.output = {'roommates':[profile()], 'questions':[], 'unsupported_requests':[]}
+        self.output = {'roommates':[profile()], 'questions':[], 'unsupported_requests':[], 'dish_suggestions':[]}
 
     def parse(self, output=None):
         def generate(payload, config):
@@ -35,9 +35,9 @@ class ExtractionTests(unittest.TestCase):
 
     def test_extract_and_reuse_household_normalization(self):
         result = self.parse()
-        self.assertEqual(result['roommates'][0]['preferences'][0], {'ingredient':'mushrooms', 'strength':2})
-        self.assertTrue(result['requires_confirmation'])
-        self.assertEqual(result['status'], 'ready_for_review')
+        self.assertEqual(result['roommates'][0]['preferences'][0], {'ingredient':'mushroom', 'strength':2})
+        self.assertFalse(result['requires_confirmation'])
+        self.assertEqual(result['status'], 'ready')
         self.assertEqual(result['source'], 'gemini_api')
         self.assertNotIn('fake-test-key', str(result))
 
@@ -136,7 +136,7 @@ class ExtractionTests(unittest.TestCase):
             _LOCK.release()
         with self.assertRaises(AIError):
             parse_preferences({'text':'Alex'}, lambda *_:{}, CONFIG)
-        self.assertEqual(self.parse()['status'], 'ready_for_review')
+        self.assertEqual(self.parse()['status'], 'ready')
 
 
 class SchemaAndErrorRegressionTests(unittest.TestCase):
@@ -157,7 +157,7 @@ class SchemaAndErrorRegressionTests(unittest.TestCase):
     def test_local_limits_still_reject_oversized_model_lists(self):
         for people in [[dict(profile(), name='Person '+str(i)) for i in range(13)],
                        [dict(profile(), preferences=[{'ingredient':'rice','strength':1}]*21)]]:
-            output = {'roommates':people, 'questions':[], 'unsupported_requests':[]}
+            output = {'roommates':people, 'questions':[], 'unsupported_requests':[], 'dish_suggestions':[]}
             with self.assertRaises(AIError) as caught:
                 parse_preferences({'text':'Alex likes rice'}, lambda *_:response(output), CONFIG)
             self.assertEqual(caught.exception.code, 'invalid_ai_response')

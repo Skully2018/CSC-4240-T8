@@ -1,568 +1,273 @@
-# RMR Gemini implementation: file and function walkthrough
+# RMR implementation and function guide
 
-## 1. What changed
+## 1. Architecture
 
-RMR now uses Google's hosted Gemini API for natural-language preference extraction. The default model is `gemini-3.5-flash-lite`, which Google lists with a free tier when this release was prepared. There is no local model download, Ollama dependency, or GPU requirement.
+RMR converts a written household description into editable profiles using Gemini, then retrieves and evaluates MealDB recipes. Ordinary inputs search automatically after extraction; interpreted profiles remain optionally editable. Unresolved questions pause the automatic search.
 
-Python and the browser run on the user's computer. The model runs on Google's infrastructure. Your own API key authenticates the HTTPS request. Each person downloading the project supplies their own key; no shared team credential is distributed.
+There is one active meal pipeline:
 
-The existing meal-retrieval, diet-screening, and fit-scoring modules retain their algorithms. The AI interprets text into a draft profile. It does not generate recipes or override recipe restrictions.
+1. `recipe_agent.recommend()` validates the household and retrieves candidate records.
+2. Each unique candidate passes to `recipe_evaluator.evaluate_candidate()`.
+3. The evaluator normalizes provider data, applies restrictions, and calls the canonical scoring functions in `happiness.py`.
+4. The recipe agent ranks the evaluator's accepted/review candidates, applies small rating adjustments, and returns results.
 
-The original uploaded backend ZIP omitted `web/`. The preceding version reconstructed that frontend. This Gemini version updates that interface and keeps its lavender styling, RMR name, editable review screen, and right-hand saved-meals sidebar.
+`/api/evaluate` delegates to this same pipeline. It does not run an independent search implementation or use a different happiness formula. The legacy singular `recipe` response field remains available and never selects a review candidate.
 
-## 2. Read this before setup
+Gemini performs text extraction. Python validates profiles and performs recipe screening/scoring. The displayed percentages are heuristic preference-fit scores, not calibrated satisfaction or safety probabilities.
 
-A free-tier-capable model does not force requests to be free. Google associates requests with the project owning the API key. If that project has paid billing enabled, the request can be billable. The API does not provide a `free=true` request option, and RMR cannot inspect or enforce billing tier.
+## 2. Installation and account requirements
 
-Use an eligible project on Google's Free tier without Cloud billing enabled to avoid paid usage. Check current availability and quotas in AI Studio. RMR makes no automatic model fallback, adds no paid tools, and makes no automatic retries. A quota failure produces a visible error.
+Follow `README.md` to install Python, create a Gemini API key, copy `.env.example` to `.env`, and launch the application. The app uses only Python's standard library; no pip packages, local model download, Ollama, or GPU are required.
 
-The description is sent to Google, including any names and allergies it contains. Google's free-tier terms permit content use to improve products, subject to applicable terms. Prefer nicknames or fictional profiles for evaluation. The app's setup screen discloses this change from local processing.
+The default is `gemini-3.5-flash-lite`; `gemini-3.1-flash-lite` is also explicitly allowed. These were documented free-tier-capable models when this release was prepared. Google controls availability, eligibility, quotas, and pricing. The app cannot inspect or enforce billing tier. Use an eligible Free-tier project without Cloud billing enabled to avoid paid usage.
 
-See `README.md` for exact Windows/macOS/Linux commands. Do not share your real key or private `.env` file.
+The complete description goes to Google, including names/restrictions typed into it. Use nicknames or fictional class-evaluation profiles where possible. Review Google's terms for free-tier processing. Each downloader supplies their own key; never distribute a configured `.env`.
 
-## 3. Complete file inventory
+## 3. File inventory
 
-| File | Role | New/changed for Gemini? |
-| --- | --- | --- |
-| `main.py` | Starts the local HTTP server and routes API requests | Changed |
-| `diagnose_gemini.py` | Checks metadata access, then optionally tests one real extraction without printing secrets | New in diagnostic update |
-| `test_diagnose_gemini.py` | Verifies diagnostic call counts and secret omission | New in diagnostic update |
-| `config.py` | Reads private Gemini settings and provides non-secret setup status | New |
-| `preference_agent.py` | Builds the Gemini request, sends it, validates output, returns an editable draft | Changed |
-| `recipe_agent.py` | Validates household input, retrieves MealDB data, screens and ranks meals | Algorithm retained |
-| `diet_rules.py` | Ingredient normalization, equivalences, diet rules, allergen checks | Algorithm retained |
-| `happiness.py` | Preference matching, per-person scores, household fairness ranking | Algorithm retained |
-| `recipe_evaluator.py` | Existing proposal/validation/evaluation endpoint | Algorithm retained |
-| `web/index.html` | Description input, setup instructions, profile review, results, bookmarks | Changed |
-| `web/app.js` | Browser event handlers, API calls, editable state, rendering, storage | Changed and reformatted for readability |
-| `web/style.css` | Lavender colors, responsive layout, forms, cards, sidebar | Retained from preceding natural-language version |
-| `.env.example` | Non-secret template users copy to `.env` | New |
-| `.gitignore` | Excludes private configuration, Python caches, virtual environments, evaluation outputs | Changed |
-| `requirements.txt` | Documents standard-library-only runtime | Changed |
-| `Start RMR.cmd` | Windows launcher that changes into its own folder and starts Python | Retained |
-| `Start_RMR.sh` | macOS/Linux launcher that changes into its own folder and starts Python | Retained |
-| `evaluate_extraction.py` | Runs labeled cases against real Gemini with request spacing | Changed |
-| `evaluation/cases.json` | Twenty manually labeled development cases | Retained |
-| `test_config.py` | Configuration, key-handling, defaults, validation tests | New |
-| `test_preference_agent.py` | Controlled Gemini response, HTTP transport, validation/error tests | Changed |
-| `test_http.py` | Endpoint, status, packaged assets, quota, and integrated pipeline tests | Changed |
-| `test_diets.py` | Existing diet and ingredient screening tests | Retained |
-| `test_happiness.py` | Existing fit/fairness scoring tests | Retained |
-| `test_ratings.py` | Existing rating adjustment and discovery tests | Retained |
-| `test_recipe_evaluator.py` | Existing Agent 2 validation/search tests | Retained |
-| `tools/browser_smoke.py` | Optional Playwright UI check using intercepted provider responses | Changed |
-| `README.md` | User setup, use, troubleshooting, APIs/storage overview | Rewritten |
-| `IMPLEMENTATION_GUIDE.md` | This detailed architecture, file, and function guide | Rewritten |
+| File | Responsibility |
+| --- | --- |
+| `main.py` | Local HTTP server, API routing, static frontend files |
+| `config.py` | Private Gemini settings and non-secret configuration status |
+| `household.py` | Shared profile validation, normalization, preference deduplication |
+| `preference_agent.py` | Gemini extraction, schemas, validation, classified provider errors |
+| `recipe_agent.py` | MealDB retrieval, shared evaluator orchestration, ratings, ranking |
+| `recipe_evaluator.py` | Provider record normalization, restriction/review checks, candidate scoring |
+| `happiness.py` | One canonical fit-scoring and ranking formula |
+| `diet_rules.py` | Culinary normalization, specific/category matching, dietary/allergen rules |
+| `web/index.html` | Description, setup, review, results, saved-meal markup |
+| `web/app.js` | Browser workflow, editable state, ratings/bookmarks, localStorage |
+| `web/style.css` | Lavender styling and responsive layout |
+| `diagnose_gemini.py` | Metadata check, optional one-call extraction check |
+| `evaluate_extraction.py` | Real-model evaluation runner with request spacing |
+| `evaluation/cases.json` | Twenty-four labeled development descriptions |
+| `test_config.py` | Configuration defaults, validation, and secret omission |
+| `test_diagnose_gemini.py` | Diagnostic call counts and secret omission |
+| `test_preference_agent.py` | Controlled model responses, transport/errors, schema regressions |
+| `test_http.py` | Server endpoints, assets, error responses, integration |
+| `test_diets.py` | Existing dietary/exclusion/allergy checks |
+| `test_happiness.py` | Canonical preference/fairness scoring behavior |
+| `test_ratings.py` | Rating adjustments and unrated discovery |
+| `test_recipe_evaluator.py` | Evaluator restrictions, unique candidates, bounded search |
+| `test_dish_suggestions.py` | Dish inference, automatic application, explicit preference precedence, ownership, restrictions, and profile limits |
+| `test_recommendation_visibility.py` | Higher-fit label-note meals remain visible while hard conflicts stay excluded |
+| `test_pipeline.py` | Shared-route consistency, exact/category matching, duplicates, malformed records |
+| `tools/browser_smoke.py` | Optional Playwright workflow test with intercepted API responses |
+| `.env.example` | Non-secret configuration template |
+| `.gitignore` | Excludes secrets, environments, caches, generated evaluation outputs |
+| `requirements.txt` | Documents standard-library-only runtime |
+| `Start RMR.cmd` | Windows launcher |
+| `Start_RMR.sh` | macOS/Linux launcher |
+| `README.md` | Setup, usage, tests, and troubleshooting |
+| `IMPLEMENTATION_GUIDE.md` | This file/function guide |
 
-A real `.env` is deliberately absent from the distributed archive. No downloaded weights, credentials, virtual environment, or fabricated evaluation results are bundled.
+The archive excludes the real `.env`, Python caches, downloaded models, and fabricated evaluation results.
 
-## 4. Configuration: config.py
+## 4. Configuration functions: config.py
 
-### Constants
+- `GeminiConfig`: immutable settings object containing key, model, timeout. The ordinary dataclass representation omits the key.
+- `ConfigError`: readable configuration failure without secret values.
+- `read_env_file(path)`: reads supported `KEY=value` settings, whole-line comments, optional matching quotes, and blank lines. It rejects duplicates/unknown settings and never executes or expands file content.
+- `load_config(env=None, env_path=None)`: reads `.env` beside the Python modules, applies environment overrides, validates model/key/timeout, and returns settings. A placeholder is treated as no key. Timeout is 5–180 seconds, default 45.
+- `public_ai_status()`: reports model, whether a key is present, and a non-secret message. It does not call Google, verify the key, inspect billing, or consume generation quota.
 
-- `BASE_DIR`: the folder containing the Python modules. This ensures `.env` is found even when Python is started from another working directory.
-- `DEFAULT_MODEL`: `gemini-3.5-flash-lite`.
-- `FREE_TIER_MODELS`: the explicit allowlist containing the default and `gemini-3.1-flash-lite`. These models have documented free tiers; access/pricing still depend on Google and the project. Selecting another model requires a deliberate code change and pricing review.
-- `SETTING_NAMES`: the three recognized keys: `GEMINI_API_KEY`, `GEMINI_MODEL`, and `GEMINI_TIMEOUT_SECONDS`.
+Editing `.env` takes effect on the next request. Environment values override it; changing a parent shell's variables does not alter an already-running Python process.
 
-### ConfigError
+## 5. Shared household validation: household.py
 
-An exception for bad local configuration. Messages identify the problem or line number but do not print secret setting values. `parse_preferences()` converts it to a user-facing `AIError`.
+- `terms(data, field)`: accepts up to 20 ingredient terms, validates their types/lengths, normalizes culinary equivalents, and deduplicates them.
+- `household(data)`: accepts 1–12 uniquely named profiles, validates supported diets and strengths 0/1/2, normalizes ingredients, and deduplicates preferences by canonical ingredient.
 
-### GeminiConfig
+Repeated preferences contribute once. If synonyms/repetitions state different nonnegative strengths, the strongest is retained independent of input order. Exclusions/allergies remain separate. The compatibility `likes` field contains positive ingredients.
 
-An immutable dataclass containing `api_key`, `model`, and `timeout`. The API key uses `repr=False`, so printing the ordinary dataclass representation does not reveal it. This is not a general secret vault; developers must still avoid explicitly logging the field.
+Both model output and user-edited search input use this validator. `recipe_agent.household` remains importable as a re-export for existing team code, but the implementation resides only here.
 
-### read_env_file(path)
+## 6. Gemini extraction: preference_agent.py
 
-Reads the private configuration as text. It accepts `KEY=value`, optional matching single/double quotes, blank lines, whole-line comments, and UTF-8 with or without a BOM. It rejects unknown names, duplicate settings, and unclosed quotes.
+### Schema and prompt
 
-It does not run a shell, evaluate Python, expand `$VARIABLES`, or support shell `export` statements or inline comments. File content is configuration data only.
+`array()` and `obj()` construct `SCHEMA`, the full local validation contract. It permits up to 12 roommates, each with up to 20 preferences/exclusions/allergies, bounded strings, supported diet values, and strengths 0/1/2.
 
-### load_config(env=None, env_path=None)
+`generation_schema()` derives `GEMINI_SCHEMA` by omitting string lengths, array counts, additional-property restrictions, and integer enums from the provider grammar. This avoids unnecessarily complex constrained decoding. The full constraints remain in the instructions and local `_strict()` validator.
 
-1. Reads `.env` beside `main.py`.
-2. Applies environment-variable overrides.
-3. Treats the example key placeholder as a missing key.
-4. Checks key characters without printing the key.
-5. Checks the model against the allowlist.
-6. Checks that the timeout is an integer between 5 and 180 seconds.
-7. Returns `GeminiConfig`.
+`SYSTEM` asks Gemini to extract explicit facts, preserve roommate ownership, ask about ambiguity/conflicts, and identify unsupported requests. Neutral/like/strong like map to 0/1/2. Dislikes become hard exclusions. Ambiguous sensitivities require questions rather than invented diagnoses.
 
-No key is required merely to start the server. This allows manual entry and recipe search to remain usable. A missing key is rejected only when extraction is requested.
+Supported diets are Any, Vegetarian, Vegan, Mediterranean, Pescatarian, Gluten Free. The current schema holds one diet per person. Budget, cooking time, calories, equipment, spice intensity, texture, and religious certifications are not enforced by recipe search; the prompt asks Gemini to flag them.
 
-Settings are loaded on each extraction and status request. Editing `.env` takes effect on the next request. Changing an OS environment variable outside an already running process does not modify that process's environment; relaunch in that case.
+Positive/neutral dish preferences produce separate `dish_suggestions`, each containing an existing roommate's name, a dish name, up to eight core ingredients, and strength. `review_dish_suggestions()` normalizes/deduplicates these entries, rejects unknown ownership, and filters known personal restriction conflicts. The response adds `excluded_ingredients` for the review display. `apply_dish_suggestions()` then merges allowed core ingredients into the profile automatically. Explicit preferences always win; shared inferred ingredients deduplicate with maximum inferred strength. It records `applied_ingredients`, never changes allergies/exclusions, and raises a clarification question if the profile limit prevents adding all inferred preferences.
 
-### public_ai_status()
+The prompt uses cheeseburger -> beef/cheese/bread as a core-ingredient example, omits optional toppings, and asks about ambiguous cuisines or disliked dishes. Actual model quality still requires live evaluation.
 
-Returns provider name, configured model, whether a key is present, a readable setup message, and `connection_tested: false`.
-
-It does not return the key, inspect billing, call Google, or consume model quota. “Configured” means local settings exist, not that the key works.
-
-## 5. Language-model integration: preference_agent.py
-
-### AIError
-
-Carries a safe message plus `status`, `code`, and optional `retry_after`. `main.py` uses these to return appropriate JSON errors. Provider error bodies and raw exception strings are not forwarded to the browser because they may contain submitted data or request details.
-
-### array(items, maximum) and obj(properties)
-
-Small helpers that construct the JSON schema. `array()` defines an item type and maximum count. `obj()` requires its declared fields and rejects additional properties.
-
-### SCHEMA
-
-The complete local validation schema requires:
+The output contract is:
 
 ```json
 {
-  "roommates": [
-    {
-      "name": "Alex",
-      "diet": "Vegetarian",
-      "preferences": [
-        {"ingredient": "mushrooms", "strength": 2}
-      ],
-      "avoid": ["olives"],
-      "allergies": []
-    }
-  ],
+  "roommates": [{
+    "name": "Alex",
+    "diet": "Vegetarian",
+    "preferences": [{"ingredient": "mushroom", "strength": 2}],
+    "avoid": ["olive"],
+    "allergies": []
+  }],
   "questions": [],
-  "unsupported_requests": []
+  "unsupported_requests": [],
+  "dish_suggestions": []
 }
 ```
 
-This is an illustrative contract, not a measured Gemini result. The application permits up to 12 roommates and up to 20 entries in each person's preference, exclusion, and allergy lists. Text lengths are bounded. Diets and preference strengths are enums.
+This is an illustration, not a recorded model result. Valid JSON can still misunderstand the description; users can correct the interpretation in the optional editor.
 
-Gemini's supported schema features can differ from full JSON Schema. Python performs its own checks after generation, including length checks that a provider may not enforce. A valid structure does not prove semantic correctness.
+### Transport and errors
 
-### SYSTEM
+- `AIError`: safe message, HTTP status, machine-readable code, optional numeric retry delay.
+- `NoRedirect.redirect_request()`: refuses redirects so the key header is not forwarded to another destination.
+- `_gemini_request(payload, config)`: sends one HTTPS request with `x-goog-api-key` header and bounded response size. A payload sends POST `:generateContent`; None sends model metadata GET. Normal TLS checks remain enabled.
+- `gemini_generate()`: thin generation entry point.
+- `gemini_model_info()`: thin metadata entry point.
+- `provider_error()`: reads bounded error data, classifies known conditions, and returns fixed messages without forwarding raw bodies or arbitrary provider text.
 
-The extraction prompt defines what each phrase should mean:
+Known error codes distinguish invalid keys, disabled API, key restrictions, unavailable models, account prerequisites, schema rejection/complexity, quota limits, connection failures, and invalid responses. No automatic retries, model fallback, or paid tools are enabled.
 
-| Wording | Intended extraction |
+### Extraction entry point
+
+`parse_preferences(request, generate=None, config=None)`:
+
+1. Validates 1–6,000 characters of text and loads settings.
+2. Requires a key and takes a nonblocking extraction lock.
+3. Builds system instructions, user contents, and generation settings: one candidate, temperature 0, 4,096 output-token cap, JSON MIME type, simplified JSON schema.
+4. Calls `gemini_generate()` or the controlled test substitute.
+5. `_response_text()` accepts one completed STOP candidate, ignores thought-marked parts, and handles explicit blocking.
+6. `_strict()` validates complete local types, counts, lengths, fields, and enum values.
+7. `household()` normalizes/deduplicates valid profiles.
+8. Returns the draft, questions, unsupported requests, model/source, and `requires_confirmation: false`.
+
+The lock is released even on failure. `ready` means no clarification questions were returned; it does not establish semantic correctness. Temperature 0 is not a reproducibility guarantee.
+
+## 7. Recipe retrieval: recipe_agent.py
+
+- `ProviderError`: controlled external recipe-provider failure.
+- `fetch(endpoint, params)`: timed MealDB HTTPS request and outer-list validation. Individual records pass to the evaluator for field validation.
+- `discover(get)`: retrieves first-letter batches with four workers. An unexpected batch type becomes a controlled provider error.
+- `_rating_map(data)`: validates rating-container input and retains valid household-scoped 1–5 ratings by recipe ID.
+- `recommend(data, get=fetch, max_attempts=None, max_results=12)`: validates household/limits, deduplicates candidate IDs, calls `evaluate_candidate()` for every candidate, then ranks accepted/review results.
+
+Default discovery stops when enough eligible recipes and unrated options are found, or after all letters. It is a bounded provider search, not a guarantee of globally optimal ranking over every MealDB record. Explicit positive `max_attempts` bounds unique candidates when requested.
+
+Ratings make a small ordering adjustment after mandatory screening; highly rated prior meals may remain even without current taste matches. Up to three unrated results are retained when available, limited by `max_results`.
+
+The `_select()` helper applies shared ranking/exploration to each pool. Responses include `recommendations` (one combined ranking of screened and review candidates), legacy recipes/review partitions, rule exclusions, invalid-record count, attempted unique IDs, rejection reasons, and a readable message. Invalid records are not counted as dietary violations. ID-less invalid records are counted as encountered because they cannot be reliably deduplicated by recipe ID.
+
+## 8. Candidate evaluation: recipe_evaluator.py
+
+- `normalize_recipe(row)`: checks ID, required text fields, optional metadata types, populated ingredient names/measures, and at least one ingredient. It creates a normalized record without changing the provider dictionary.
+- `_validate_normalized(recipe, people)`: one shared restriction/review implementation. Checks allergies, category-aware exclusions, diet rules, unsupported allergen terms, and uncertain ingredient labels/composition.
+- `validate_recipe(row, people)`: public raw-record validation entry point using the same normalization/checks.
+- `_score_normalized(recipe, people)`: calls canonical `score_recipe()` and `household_happiness()` and computes roommate coverage.
+- `evaluate_happiness(row, people)`: direct helper using that same score path; malformed records raise ValueError.
+- `evaluate_candidate(row, people)`: active pipeline entry point. Normalizes once, screens once, scores acceptable/review candidates once, and constructs the result card. Invalid/unsafe candidates never become recommendation cards.
+- `choose_recipe(request, get=None, max_attempts=None, max_results=12)`: compatibility wrapper over `recommend()`. It adds singular `recipe` and preserves `no_verified_recipe` for an otherwise empty no-match result. It never selects a review candidate as the singular recipe.
+
+The evaluator's states are invalid, unsafe, needs_review, or safe under automated checks. These refer to program screening rather than a real-world safety guarantee. Labels and cross-contact still require verification.
+
+The wrapper's import of `recommend()` is local to avoid a module cycle. It does not create a second retrieval algorithm. With identical inputs and limits, both endpoints return identical lists/scores.
+
+## 9. Matching and fit: diet_rules.py and happiness.py
+
+`diet_rules.key()` normalizes case, accents, common plurals, and curated culinary equivalents. `vocabulary()`, `base_name()`, and `mentions()` support vocabulary construction, preparation-prefix removal, and whole-phrase checks.
+
+`food_terms()` expands only explicitly generic categories: fish, shellfish, seafood, dairy, cheese, nuts/tree nuts, and gluten. Specific salmon, cheddar, shrimp, or almond terms do not expand to unrelated allergen-family members. True synonyms such as shrimp/prawn and aubergine/eggplant remain equivalent. The same category semantics apply to taste preferences and always-exclude terms.
+
+Allergy screening in `screen()` retains its separate conservative family expansion. Changes to taste matching do not weaken that screening. Existing dietary vocabularies and qualified gluten-free/plant alternatives remain in use.
+
+`happiness.py` has one formula family:
+
+- `matches()`: normalized ingredient phrases with explicit generic-category expansion.
+- `score_recipe()`: personal fit/reasons. Direct callers also receive preference deduplication protection.
+- `household_score()`: minimum/mean blend plus shared-fit bonus.
+- `household_happiness()`: percentage conversion or None when unscored.
+- `ranking_key()`: coverage, household fit, minimum fit, and deterministic title/ID ties.
+
+The working recommendation formula is preserved: matched preference points are 0.03/0.08/0.10 for neutral/like/strong like, added to a 0.62 baseline with the existing list-size adjustment and 0.90 cap. Unknown personal scores display as unscored; when some profiles match, their household contribution uses the existing 0.70 baseline. The household blend weights the minimum by 0.6 and mean by 0.4, adding the existing shared-fit bonus at full coverage.
+
+Names ending in `_for_recommendations` remain simple aliases to these exact function objects for existing imports. They do not contain alternate implementations. The legacy percentage-of-liked-ingredients formula and its negative-strength branch have been removed.
+
+## 10. Server calls: main.py
+
+`main()` handles port/browser arguments, binds the threaded server to `127.0.0.1`, and optionally opens a browser. It tries ports 8765–8780 unless a port is explicit. This is a local application server, not a production internet deployment.
+
+`Handler.end_headers()` disables ordinary HTTP caching. `reply()` serializes JSON responses. `do_GET()` serves non-secret `/api/ai-status` or static files rooted in `web/`. The private `.env` is outside that directory.
+
+`do_POST()` checks route, supplied Origin, content type, and request size. Routes:
+
+| Route | Call |
 | --- | --- |
-| “Rice is fine” | Rice, strength 0 |
-| “I like rice” | Rice, strength 1 |
-| “I love rice” | Rice, strength 2 |
-| “I hate olives” | Olives in `avoid` |
-| “Never include olives” | Olives in `avoid` |
-| “I am allergic to peanuts” | Peanuts in `allergies` |
-| “Dairy bothers me” | Clarification question rather than a diagnosed allergy |
-| “Make it under $10” | Unsupported budget request |
+| `/api/parse-preferences` | `parse_preferences(data)` |
+| `/api/recommend` | `recommend(data)` |
+| `/api/evaluate` | `choose_recipe(data)` -> `recommend(data)` |
 
-The prompt asks the model to extract explicit facts, preserve roommate ownership, avoid inventing additional people, and ask about contradictions. Unnamed people get placeholder names. A person can have only one supported diet in the current data model; incompatible or multiple simultaneous diet statements require clarification rather than silent loss of a restriction.
+Input failures are HTTP 400; Gemini uses its classified AIError status/code; recipe-provider failures are HTTP 502. There is no mandatory browser confirmation checkbox. API callers can inspect the same extracted profiles and recipe label-check metadata.
 
-Budget, cooking time, calories, equipment, texture, spice intensity, and religious certification are not supported by the current search engine. The model should list them under `unsupported_requests`.
+## 11. Browser functions and state: web/app.js
 
-The model receives the system instructions separately from the user message. It is instructed to treat embedded instructions in the household description as data. This reduces a common failure mode but does not guarantee resistance to semantic manipulation. It has no external tools or code execution.
+State consists of editable and last-saved profiles, bookmarks, ratings, household ID, and a busy flag. A new extraction replaces the draft. Edits hide stale results. Inferences are applied on the server; there is no pending-dish counter or manual add/skip gate. Extraction automatically calls recipe search if profiles exist and no unresolved questions remain. Questions stay visible and open the editor; unsupported requests remain visibly unenforced.
 
-### _strict(value, schema, path='output')
-
-Recursively validates every output value. It checks object fields, list sizes, string lengths, integer types, and allowed enum values. Boolean values are explicitly rejected as integer preference strengths.
-
-It catches bad data shapes, not whether a sentence was interpreted correctly. An omitted allergy can still produce structurally valid JSON; the review step and real evaluation are needed for that kind of failure.
-
-### NoRedirect.redirect_request(...)
-
-Prevents automatic HTTP redirects for the Gemini request. This avoids forwarding the custom API-key header to a redirected destination. It returns `None`, causing the redirect response to be handled as an error.
-
-### gemini_generate(payload, config)
-
-Delegates to `_gemini_request(payload, config)`, which makes exactly one HTTPS request to:
-
-```text
-https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent
-```
-
-The model segment comes from validated configuration. The key is sent in the `x-goog-api-key` HTTP header, not in the URL or JSON body. The request uses standard TLS validation; the code does not disable certificate checking.
-
-The method reads a bounded response, parses its outer JSON, and returns the provider envelope. It does not interpret roommate fields yet.
-
-Error handling:
-
-| Upstream condition | RMR result |
+| Function(s) | Purpose |
 | --- | --- |
-| HTTP 400 | HTTP 502, `gemini_request_rejected` |
-| HTTP 401/403 | HTTP 503, `gemini_access_denied` |
-| HTTP 404 | HTTP 503, `model_unavailable` |
-| HTTP 429 | HTTP 429, `quota_exceeded` |
-| Other service HTTP errors | HTTP 503, `gemini_service_error` |
-| Connection failure/timeout | HTTP 503, `gemini_connection_error` |
-| Oversized/non-JSON response | HTTP 502, `invalid_ai_response` |
+| `$`, `node`, `control` | Fixed-element lookup, text-safe element creation, labels |
+| `textInput`, `action`, `select`, `listInput` | Input/button/dropdown/list controls and change callbacks |
+| `save`, `invalidate`, `setBusy` | Persistence, stale-result invalidation, overlapping-action prevention |
+| `renderDishSuggestions` | Shows a collapsed informational explanation of automatically inferred ingredients and omitted conflicts |
+| `showList`, `renderPeople` | Clarifications/unsupported requests and editable profiles |
+| `post` | JSON requests to the local Python server, readable error propagation |
+| `extractPreferences` | Parse endpoint, optional profile editor, then automatic search when unambiguous |
+| `emptyPerson`, `addPerson`, `openManual` | Unique placeholder names and manual fallback |
+| `externalLink` | HTTPS-only external links |
+| `ratingControl`, `syncRatingControls` | Rate/update/clear a meal and immediately synchronize every visible control for that recipe |
+| `card`, `renderFavorites` | Recipe results, review notes, ingredient details, bookmarks/sidebar |
+| `findRecipes` | Call recommend, persist profiles, render the unified recommendations list with inline label notes |
+| `clearData` | Confirm and reset this app's browser data |
+| `checkSetup` | Visible progress/completion time for a local configuration check; no Gemini call |
 
-A simple numeric provider `Retry-After` value is bounded and returned in the JSON error as `retry_after`. RMR does not sleep and retry automatically. It never silently changes to another model.
+`textContent` avoids inserting model/provider output as HTML. External images/links use HTTPS. The current browser must support structuredClone, crypto.randomUUID, and inert.
 
-### _response_text(result)
+The HTML defines the screens/controls and loads JavaScript/CSS without a build step. CSS supplies lavender styles, focus states, cards, and an 850px mobile breakpoint.
 
-Reads Gemini's response envelope. It requires exactly one candidate and `finishReason: STOP`. Missing output, truncated generation, malformed parts, and unexpected non-text parts are rejected.
+## 12. Storage and distribution
 
-If Gemini explicitly blocks the prompt or candidate, the app returns a readable `ai_blocked` error. If the provider includes thought-marked parts, they are discarded; only final text is parsed into profile data.
+The API key stays in `.env` or the Python environment and goes to Google only in the HTTPS authentication header. It is not returned to JavaScript, sent to MealDB, or saved in localStorage. Error bodies and POST contents are not logged by RMR.
 
-### parse_preferences(request, generate=None, config=None)
+The browser stores confirmed profiles after a successful search, bookmarks, household-scoped ratings, and a random household ID under `rmr_natural_language_v1`. Raw descriptions/questions/unsupported lists are not persisted there. Origin, port, and browser profile determine access. There is no shared database/synchronization.
 
-This is the main agent function and the entry point used by the server and evaluation script.
+Existing saves remain compatible. Duplicate preferences in older saved profiles normalize during the next search and are saved in corrected form afterward. Clearing browser data does not remove the server-side `.env`.
 
-1. Requires `request` to contain a text string of 1–6,000 characters after trimming.
-2. Loads configuration and checks that a key exists.
-3. Obtains a nonblocking extraction lock. Another active request produces `ai_busy` rather than a queue of quota-consuming requests.
-4. Builds the Gemini request.
-5. Calls `gemini_generate()` or an injected test function.
-6. Calls `_response_text()` and parses the final JSON.
-7. Calls `_strict()`.
-8. Calls the existing `recipe_agent.household()` validator for nonempty profiles.
-9. Adds a clarification question if no people were extracted and the model returned no question.
-10. Returns the validated draft plus metadata; always releases the lock.
+Keep `.env` untracked. `.gitignore` is not encryption and does not untrack a previously committed secret. Check staged changes before publishing. Each downloader copies `.env.example` and creates their own key.
 
-The injected `generate` and `config` parameters let tests supply controlled responses and fake credentials without network access. Production calls omit them and use the real transport and local settings.
+## 13. Diagnostics and evaluation
 
-The Gemini request body uses:
+`diagnose_gemini.main()` reads configuration and checks model metadata access without generating text. `--extract` adds one fixed fictional extraction after metadata succeeds. Output uses non-secret PASS/FAIL messages. Success does not establish semantic accuracy or billing tier.
 
-```python
-{
-    "systemInstruction": {"parts": [{"text": SYSTEM}]},
-    "contents": [{"role": "user", "parts": [{"text": description}]}],
-    "generationConfig": {
-        "temperature": 0,
-        "candidateCount": 1,
-        "maxOutputTokens": 4096,
-        "responseMimeType": "application/json",
-        "responseJsonSchema": GEMINI_SCHEMA
-    }
-}
-```
+`evaluate_extraction.canonical()` creates normalized, sorted profile comparisons. Its `main()` supports `--limit`, `--output`, and `--interval`, calls real extraction, records actual output/timing/checks, and stops on runtime/provider failure. Default spacing is seven seconds, which must be adjusted to the project's quota.
 
-Temperature 0 reduces sampling variability but is not a promise of identical output. The model does not receive recipe-search tools. The 45-second default timeout is configurable.
+The 24 labeled examples are a development set. The first 12 check complete unambiguous profiles. Ambiguous cases check clarification/unsupported lists; their meaning needs human review. Four additional dish cases cover cheeseburgers, explicit exclusions alongside dish preferences, negative dish preferences, and broad cuisine requests. The runner also compares proposed dish ingredients separately from explicit profiles. Evaluation JSON intentionally contains descriptions and extracted data, unlike ordinary browser persistence.
 
-The endpoint response adds:
+For assignment evidence, add a held-out set, independently label it, report field/exact-match errors, allergy/exclusion omissions, clarification quality, runtime failures, and latency. Preserve actual failed examples and prompt experiments. Do not invent results or abandoned approaches.
 
-- `status`: `ready_for_review` or `needs_clarification`.
-- `model`: the configured model name.
-- `source`: `gemini_api`.
-- `requires_confirmation`: always true.
+## 14. Verification and limits
 
-`ready_for_review` means the model returned no clarification questions. It is not an accuracy or food-safety certification. Existing household normalization also adds the legacy `likes` field for compatibility.
+There are **110 Python tests** covering configuration, Gemini extraction/transport/errors, HTTP routing, diet rules, scoring, ratings, evaluator behavior, and shared-pipeline regressions. Tests use controlled responses/fake credentials; they do not make real Gemini or MealDB requests.
 
-## 6. Local server: main.py
+New regressions verify identical endpoint scoring/lists, evaluator participation in the live recommendation path, canonical score aliases, specific/category matching, preserved allergy screening, duplicate preference handling, invalid provider records, optional null fields, and nonmutation of provider data.
 
-### main()
+JavaScript syntax, controlled rating-control checks, and controlled automatic-search/clarification checks also pass. The optional Playwright script checks broader browser behavior, including both-direction rating synchronization, but has not run here because no working Chromium binary is installed. It requires optional development packages; app users do not need them.
 
-Parses `--port` and `--no-browser`, creates the threaded HTTP server on `127.0.0.1`, and starts serving. Without an explicit port, it tries ports 8765–8780. It opens the browser after startup unless disabled.
+No live Gemini call was made in this environment because no user key is configured. Verify one real extraction and the browser flow on the demonstration computer. Fixture-based tests do not establish real-model extraction accuracy.
 
-The server binds to loopback. It is designed for a local class application, not direct internet deployment. Hosting it publicly would require proper authentication, request limiting, server deployment, and secret management.
+## 15. Official references
 
-### Handler.end_headers()
-
-Adds `Cache-Control: no-store` so the browser does not retain stale app/API responses through ordinary HTTP caching.
-
-### Handler.reply(status, data)
-
-Serializes Python data to JSON, sets content type and length, and writes the response. AI errors use this same response path.
-
-### Handler.do_GET()
-
-Handles `GET /api/ai-status` by calling `public_ai_status()`. Other GETs use the existing static-file handler rooted in `web/`. The private `.env` lives outside this served directory; the HTTP tests verify `/.env` is not served.
-
-### Handler.do_POST()
-
-Checks the route, supplied browser Origin, JSON content type, and request size. The browser Origin, when present, must match the request Host using the local HTTP origin. This is a local browser cross-origin check, not a complete deployment authentication system.
-
-Routes:
-
-| Request | Function called |
-| --- | --- |
-| `POST /api/parse-preferences` | `parse_preferences(data)` |
-| `POST /api/recommend` | `recommend(data)` |
-| `POST /api/evaluate` | `choose_recipe(data, max_attempts=50, max_results=12)` |
-
-Invalid input becomes HTTP 400. Gemini failures preserve the `AIError` status/code. MealDB failures remain HTTP 502 through `ProviderError`.
-
-The browser confirmation workflow is not implemented as a server-side token. Direct API clients can call `/api/recommend` themselves and must provide their own review process.
-
-## 7. Frontend: web/index.html and web/app.js
-
-The HTML defines seven main areas: description input, setup instructions/status, clarification messages, editable profiles, confirmation, recipe results, and saved-meal sidebar. It loads `style.css` and `app.js` without a build step.
-
-The JavaScript is reformatted into readable functions. It has no API key field, Google request, or provider SDK; all provider access goes through Python.
-
-### State
-
-- `draft`: editable profiles from extraction or manual entry.
-- `confirmed`: the last profiles saved after a successful recipe-search response.
-- `favorites`: recipe bookmarks.
-- `ratings`: household-scoped 1–5 recipe ratings.
-- `householdId`: a random browser-local identifier used to scope ratings.
-- `busy`: prevents overlapping extraction/search actions in this tab.
-
-### DOM helpers
-
-| Function | What it does |
-| --- | --- |
-| `$()` | Finds a fixed HTML element by ID |
-| `node()` | Creates an element and inserts text with `textContent` |
-| `control()` | Wraps an input in a label |
-| `textInput()` | Creates a text input and clears confirmation on edits |
-| `action()` | Creates a button with its click callback |
-| `select()` | Creates a dropdown; profile edits clear confirmation, ratings do not |
-| `listInput()` | Converts one ingredient per line to a list |
-| `showList()` | Shows clarification or unsupported-request messages |
-| `externalLink()` | Creates HTTPS-only external links with safe tab attributes |
-
-`textContent` prevents model/recipe text from being inserted as executable HTML. Optional external images are also restricted to HTTPS. Those external providers still receive browser requests when images or links are loaded.
-
-### Profile and extraction functions
-
-| Function | Main calls and behavior |
-| --- | --- |
-| `extractPreferences()` | Calls `post('/api/parse-preferences', {text})`, replaces `draft`, calls `showList()` and `renderPeople()` |
-| `renderPeople()` | Builds editable roommate cards from `draft`; callbacks update profile fields |
-| `emptyPerson()` | Returns a blank supported profile with a placeholder name |
-| `openManual()` | Shows editable input without an AI call and labels it as manual |
-| `addPerson()` | Adds a profile up to the 12-person limit |
-| `invalidate()` | Clears confirmation and hides stale recipe results |
-| `setBusy()` | Disables conflicting controls while extraction or search is running |
-| `post()` | Sends JSON to the local Python server, parses JSON, raises a readable error for failed HTTP responses |
-| `checkSetup()` | Calls `GET /api/ai-status` and displays its non-secret local configuration result |
-
-A new extraction replaces the entire draft. It is not a conversational edit or a merge. Users must provide a complete description when re-extracting. They can instead change individual fields directly in the review form.
-
-Clarification questions do not trigger an automatic follow-up model conversation. Users answer them by correcting fields or submitting a revised description. The confirmation checkbox is their explicit attestation that they reviewed the draft and resolved relevant questions; the app does not automatically prove that they did so.
-
-### Search, recipes, and storage functions
-
-| Function | Main calls and behavior |
-| --- | --- |
-| `findRecipes()` | Requires confirmation, calls `/api/recommend`, saves confirmed profiles, renders result/review cards |
-| `card()` | Builds a recipe card with fit, per-person reasons, ingredients, instructions, bookmark button, rating |
-| `ratingControl()` | Saves/updates/removes a household's rating for a recipe |
-| `renderFavorites()` | Builds the right sidebar from saved bookmarks |
-| `save()` | Writes confirmed profiles, bookmarks, ratings, and household ID to localStorage |
-| `clearData()` | Asks for browser confirmation, then clears this version's data and resets the UI |
-
-Raw descriptions, AI questions, and unsupported requests are not stored by RMR in localStorage. When the page reloads, it restores saved profiles but leaves confirmation unchecked.
-
-The storage key remains `rmr_natural_language_v1`, preserving the immediately preceding natural-language version's saves. Older pre-natural-language saves are not migrated because their frontend/storage format was not in the uploaded source. The clear button deletes only this version's key.
-
-### Event wiring
-
-At the end of `app.js`, the description's input event calls `invalidate()`. Buttons call the named extraction, manual-entry, add-person, search, clear-data, and setup functions. The file then restores confirmed profiles if present, calls `renderFavorites()`, and calls `checkSetup()` once.
-
-### CSS
-
-`web/style.css` defines typography, lavender colors, form controls, visible keyboard focus, cards, a two-column layout, and a mobile breakpoint at 850px. It does not process data or call APIs. No frontend package installation or build step is required.
-
-## 8. Existing recipe modules and their functions
-
-### recipe_agent.py
-
-| Function/class | Responsibility |
-| --- | --- |
-| `ProviderError` | Public-facing MealDB provider failure |
-| `fetch(endpoint, params)` | Builds the MealDB URL, performs a timed request, checks outer data shape |
-| `normalized(text)` | Tokenizes/case-normalizes terms and common plurals for input validation |
-| `terms(data, field)` | Checks bounded ingredient lists and normalizes/deduplicates them |
-| `household(data)` | Validates 1–12 distinct roommate profiles, diet, strengths, exclusions, and allergies |
-| `discover(get)` | Retrieves complete recipe records in batches of four first-letter searches |
-| `recommend(data, get=fetch)` | Applies restrictions and fit scoring, separates review candidates, uses ratings, and returns ranked results |
-
-The `get` parameter enables fixture-based tests. Production uses `fetch()`. The AI's output is passed through `household()` before review, and `recommend()` validates the user's final edits through `household()` again.
-
-### diet_rules.py
-
-| Function | Responsibility |
-| --- | --- |
-| `key(value)` | Normalizes case, accents, punctuation, plurals, and curated equivalents |
-| `vocabulary(names)` | Converts a pipe-separated vocabulary into normalized terms |
-| `base_name(name)` | Removes recognized preparation prefixes such as chopped/fresh |
-| `mentions(text, terms)` | Checks whole-phrase occurrences |
-| `screen(people, names, category, recipe_text)` | Applies existing household allergy/diet screening rules |
-
-The module also contains ingredient groups, aliases, known simple ingredients, supported diets, and gluten-free qualification rules. This is a curated screening system, not a universal food-safety database or medical diagnosis system. Labels and cross-contact still need human verification.
-
-### happiness.py
-
-The module has two existing formula families. Their differences are retained rather than silently unified during this provider migration.
-
-| Function | Responsibility |
-| --- | --- |
-| `matches()` | Matches preference terms to ingredient phrases and known food families |
-| `person_score()` | Existing positive-match proportion used by the evaluator's legacy scoring |
-| `score_recipe()` | Returns legacy per-person reasons/scores |
-| `household_score()` | Blends minimum and average scores with more weight on the minimum |
-| `household_happiness()` | Converts that legacy household score to a percentage |
-| `ranking_key()` | Sort key for the evaluator's scoring path |
-| `score_recipe_for_recommendations()` | Recommendation-specific match points, neutral matches, and unmatched states |
-| `household_score_for_recommendations()` | Recommendation-specific household blend and shared-fit bonus |
-| `household_happiness_for_recommendations()` | Recommendation-specific displayed percentage |
-| `ranking_key_for_recommendations()` | Ranks preference coverage before household fit and stable tie-breakers |
-
-The displayed percentages are heuristic preference-fit scores. They are not experimentally calibrated probabilities that someone will enjoy a meal.
-
-### recipe_evaluator.py
-
-| Function | Responsibility |
-| --- | --- |
-| `propose_recipes()` | Iterates unique proposals from the existing discovery function |
-| `_ingredients()` | Extracts ingredient/measure pairs from a MealDB record |
-| `validate_recipe()` | Returns `safe`, `needs_review`, or `unsafe` under existing automated rules |
-| `evaluate_happiness()` | Applies the evaluator's existing score calculation |
-| `choose_recipe()` | Bounded proposal/validation loop, ranking, and selected-result response |
-| Nested `sort_key()` | Builds the final ordering for evaluator candidates |
-
-These status names refer to the program's automated checks, not a guarantee of real-world food safety. The evaluator is available through `/api/evaluate`; the default frontend uses `/api/recommend`.
-
-## 9. Function call sequences
-
-### Setup check
-
-`Check setup` calls `checkSetup()` in JavaScript, which requests `GET /api/ai-status`. `Handler.do_GET()` calls `public_ai_status()`, which calls `load_config()` and returns non-secret configuration status. No model request happens.
-
-### Natural-language extraction
-
-`Review AI preferences` calls `extractPreferences()` in JavaScript. Its `post()` helper sends the description to `/api/parse-preferences`. `Handler.do_POST()` calls `parse_preferences()`. That loads settings, calls `gemini_generate()`, reads output with `_response_text()`, validates it with `_strict()` and `household()`, and returns a draft. JavaScript then calls `showList()` and `renderPeople()`.
-
-### Recipe search
-
-`Confirm & find recipes` calls `findRecipes()`. It checks the confirmation checkbox and calls `/api/recommend`. `Handler.do_POST()` calls `recommend()`. That calls `household()`, `discover()`/`fetch()`, ingredient/rule checks, and recommendation scoring functions. The browser receives recipes, saves confirmed profiles, and calls `card()` to render results.
-
-### Manual fallback
-
-`Enter preferences manually` calls `openManual()` and `renderPeople()`. No Gemini request happens. After review/confirmation, `findRecipes()` uses the same recipe endpoint as the AI-assisted path.
-
-## 10. Tests: what is verified
-
-There are **68 passing Python tests**:
-
-- 10 configuration tests.
-- 12 extraction tests.
-- 4 Gemini transport tests.
-- 6 local HTTP tests.
-- 27 original diet/scoring/rating/evaluator tests.
-- 5 schema/error regression tests.
-- 4 diagnostic command tests.
-
-Configuration tests use temporary fake `.env` data and check defaults, environment precedence, quote handling, malformed settings, model restrictions, timeout bounds, and secret omission.
-
-Extraction tests use fake credentials and controlled Gemini envelopes. They test valid profiles, clarification metadata, missing keys, bad input, invalid fields, incomplete output, blocked requests, ignored thought parts, structured payloads, and lock release.
-
-Transport tests inspect the constructed HTTPS request, header authentication, timeout, redirect refusal, response limits, safe errors, and lack of automatic retries.
-
-HTTP tests check static assets, parse routing, non-secret setup status, inaccessible `.env`, input errors, quota status, and the combined extraction-to-recommendation path. In the combined test, a controlled Gemini response produces a peanut-allergic profile. The actual recommendation pipeline then rejects a fixture recipe with peanuts and retains a compatible rice/mushroom recipe. The provider responses are simulated; profile validation and recipe screening execute normally.
-
-Run tests from the project root:
-
-```powershell
-py -3 -m unittest -v
-```
-
-Python compilation and JavaScript syntax checks also pass. The application runtime needs no pip packages. Node was used only as a development syntax check.
-
-**No real Gemini call was performed in development because no user API key was configured.** Therefore no real-model accuracy, latency, quota availability, or successful account authentication is claimed. The first single-case evaluation is the user's account-specific live check.
-
-The optional browser smoke test requires:
-
-```powershell
-py -3 -m pip install playwright
-py -3 -m playwright install chromium
-py -3 tools/browser_smoke.py
-```
-
-It intercepts AI and recipe responses to test browser flow. Development browser execution remains unverified because the environment did not have a working Chromium binary. HTTP asset checks and syntax checks do not replace visual/interaction verification. Normal app users do not install Playwright.
-
-## 11. Real Gemini evaluation: evaluate_extraction.py
-
-### canonical(people)
-
-Turns profiles into sorted, comparable records. It normalizes names and ingredient terms using the existing `diet_rules.key()` so known equivalents and ordering differences do not create unnecessary exact-match failures.
-
-### main()
-
-Parses:
-
-- `--limit`: 1–20 cases, default 20.
-- `--output`: JSON destination, default `evaluation/results.json`.
-- `--interval`: seconds between requests, default 7; configurable up to 300.
-
-It loads configuration, requires a key, reads `evaluation/cases.json`, and calls the real `parse_preferences()` for each selected description. It records expected values, actual profiles, latency, automatic checks, and runtime errors. It stops at the first provider/runtime failure without retrying.
-
-The seven-second spacing is a convenience, not a guarantee of satisfying every project's quota. Check AI Studio and increase it if necessary. Daily quotas may require waiting until reset regardless of spacing.
-
-The first 12 cases test unambiguous extraction with complete expected profiles. The remaining eight cover ambiguity or unsupported requests. Automatic checks for those cases measure only the presence of question/unsupported lists; a human must assess whether their content is correct and helpful.
-
-Run one case first, then the full development set:
-
-```powershell
-py -3 evaluate_extraction.py --limit 1
-py -3 evaluate_extraction.py --interval 7 --output evaluation/results.json
-```
-
-Evaluation outputs intentionally contain descriptions and extracted fields, unlike ordinary browser storage. Use fictional data and review files before sharing. The `.gitignore` excludes generated `evaluation/results*.json` by default.
-
-For stronger assignment evidence, create a held-out set not used to refine the prompt. Have teammates independently label it, resolve disagreements, and report exact-match accuracy, per-field errors, explicit allergy/exclusion omissions, invented allergies, clarification quality, runtime errors, and response time. Record model, date, account tier, and evaluation settings. Preserve actual failures and experiments; do not invent abandoned approaches or accuracy numbers.
-
-## 12. Browser storage, API keys, and distribution
-
-The private key exists only in `.env` or the Python process environment. It is sent to Google in an HTTPS header. It is not returned by RMR endpoints, sent to MealDB, embedded in frontend files, or saved in browser localStorage. The app does not log POST bodies or forward raw provider error bodies.
-
-Confirmed household profiles, bookmarks, ratings, and a household ID remain in localStorage. This is per browser profile and origin, including port. There is no account database, multi-device sync, or shared household storage.
-
-The clear-data button resets browser data but does not remove the private server-side key file. To remove API access, delete the key from `.env`/the environment and revoke it in AI Studio if needed.
-
-`.gitignore` protects against accidentally adding ordinary `.env` files to Git, but it is not encryption or access control. Check `git status` and staged diffs before pushing. Do not zip and share a real configured `.env`.
-
-For downloaders, distribute source plus `.env.example`. Each downloader creates a key in their own eligible project. Hosting a shared team backend would be a separate deployment task requiring authenticated access and quota controls.
-
-## 13. Remaining limits and the class demo
-
-- Gemini can omit facts or associate them with the wrong person despite valid JSON.
-- The app supports one diet per person and the existing 0/1/2 preference scale; dislikes remain hard exclusions.
-- Unsupported meal-planning constraints are displayed but not enforced.
-- The browser confirmation is user review, not automated proof of correctness.
-- Recipe screening depends on curated vocabularies and provider data.
-- Free API access depends on Google's current model/account/region/quota policies.
-- Real API access and browser interaction must be checked on the demonstration computer.
-
-Before presenting, configure your key, run the Python tests, run a single real extraction, inspect its profile, and search for a meal. Run the labeled cases early enough to handle quota limits. Present measured results and actual limitations. Describe the AI contribution as natural-language extraction combined with deterministic validation and meal recommendation.
-
-## 14. Official implementation references
-
-- https://ai.google.dev/gemini-api/docs/api-key
-- https://ai.google.dev/gemini-api/docs/pricing
-- https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite
-- https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite
-- https://ai.google.dev/gemini-api/docs/structured-output
-- https://ai.google.dev/api/generate-content
-- https://ai.google.dev/gemini-api/docs/rate-limits
-- https://ai.google.dev/gemini-api/terms
-
-## 15. HTTP 400 diagnostic update
-
-The first release returned the same generic configuration message for every HTTP 400. An invalid API key can also arrive as HTTP 400, so that message was insufficient for diagnosis. The screenshot of that message alone does not establish the upstream cause.
-
-The previous provider schema contained nested `maxItems` bounds. Google documents that counted array positions multiply the structured-output grammar and can make it too complex, causing HTTP 400. This update removes those provider grammar bounds as a compatibility fix. No successful live run is claimed without the user's own API check.
-
-### generation_schema(schema) and GEMINI_SCHEMA
-
-`generation_schema()` derives a smaller provider schema from `SCHEMA`. It omits string lengths, array counts, additional-property restrictions, and integer enums from the provider grammar. Types, named fields, required fields, and diet string enums remain. The full `SCHEMA` remains in the extraction instructions and `_strict()` still enforces all original limits and allowed values after generation. This does not permit oversized or invalid profiles into recipe search.
-
-### provider_error(exc)
-
-Reads at most 64 KiB of Google's error body, extracts known reason/status/message patterns, and maps them to fixed messages and machine-readable codes. It does not echo raw Google text, arbitrary reason strings, project identifiers, keys, or household descriptions. It distinguishes invalid keys, disabled APIs, key restrictions, schema complexity/rejection, and failed account prerequisites. Unknown errors remain generic and point to the diagnostic command. The error stream is closed after reading.
-
-### _gemini_request(payload, config)
-
-Centralizes transport for both generation and metadata. A non-None payload sends POST `:generateContent`; `None` sends GET to the model metadata endpoint. Both use header authentication, normal TLS checks, redirect refusal, bounded responses, the same timeout, and classified errors. `gemini_generate()` delegates with a payload; `gemini_model_info()` delegates with None.
-
-### diagnose_gemini.main()
-
-Loads settings and prints only the model, whether the key comes from `.env` or an environment override, and fixed PASS/FAIL messages. It verifies the returned model metadata and advertised `generateContent` method. By default it makes no generation request. With `--extract`, a successful metadata check is followed by one fixed fictional extraction through `parse_preferences()`.
-
-Commands:
-
-```powershell
-py -3 diagnose_gemini.py
-py -3 diagnose_gemini.py --extract
-```
-
-A metadata success is not proof of generation quota, schema compatibility, billing tier, or semantic accuracy. An extraction success establishes that the response passed structural/local profile validation. It does not establish whether every intended preference was extracted correctly.
-
-The new regression tests cover schema simplification with unchanged local limits, HTTP 400 key classification, known schema/account failures, secret omission for malformed error bodies, and diagnostic calls that must not generate unless `--extract` was explicitly selected.
+- API keys: https://ai.google.dev/gemini-api/docs/api-key
+- Pricing: https://ai.google.dev/gemini-api/docs/pricing
+- Structured outputs: https://ai.google.dev/gemini-api/docs/structured-output
+- REST generation: https://ai.google.dev/api/generate-content
+- Rate limits: https://ai.google.dev/gemini-api/docs/rate-limits
+- Terms: https://ai.google.dev/gemini-api/terms
+- MealDB: https://www.themealdb.com/api.php

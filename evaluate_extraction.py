@@ -16,13 +16,23 @@ def canonical(people):
                    tuple(sorted(key(x) for x in p['allergies']))) for p in people)
 
 
+def canonical_dishes(suggestions):
+    return sorted((item['name'].strip().casefold(), key(item['dish']),
+                   tuple(sorted(key(value) for value in item['ingredients'])), item['strength'],
+                   tuple(sorted(key(value) for value in item.get('excluded_ingredients', []))))
+                  for item in suggestions)
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--limit',type=int,default=20)
+    parser.add_argument('--limit',type=int,default=None,help='Number of development cases; default: all')
     parser.add_argument('--output',default='evaluation/results.json')
     parser.add_argument('--interval',type=float,default=7.0,help='Seconds between calls; increase to fit your project quota')
     args=parser.parse_args()
-    if not 1 <= args.limit <= 20:parser.error('--limit must be between 1 and 20')
+    cases=json.loads((Path(__file__).parent/'evaluation/cases.json').read_text())
+    if args.limit is not None and not 1 <= args.limit <= len(cases):
+        parser.error(f'--limit must be between 1 and {len(cases)}')
+    cases=cases[:args.limit]
     if not 0 <= args.interval <= 300:parser.error('--interval must be between 0 and 300 seconds')
     try:
         config = load_config()
@@ -30,7 +40,6 @@ def main():
         parser.error(str(exc))
     if not config.api_key:
         parser.error('Set GEMINI_API_KEY in .env before running a live evaluation.')
-    cases=json.loads((Path(__file__).parent/'evaluation/cases.json').read_text())[:args.limit]
     rows=[]
     for index, case in enumerate(cases):
         if index:
@@ -42,6 +51,7 @@ def main():
             expected=case['expected']
             checks={'clarification':bool(result['questions'])==expected['clarification'],
                     'unsupported':bool(result['unsupported_requests'])==expected['unsupported']}
+            checks['dish_proposals'] = canonical_dishes(result['dish_suggestions']) == canonical_dishes(expected.get('dish_suggestions', []))
             if expected['roommates'] is not None:
                 checks['profiles']=canonical(result['roommates'])==canonical(expected['roommates'])
             row.update(actual=result,checks=checks,passed=all(checks.values()))

@@ -33,7 +33,6 @@ function save() {
 }
 
 function invalidate() {
-  $('confirm').checked = false;
   $('results').hidden = true;
 }
 
@@ -169,29 +168,56 @@ function showList(id, title, items) {
   box.append(list);
 }
 
+function renderDishSuggestions(suggestions) {
+  const area = $('dish-suggestions');
+  area.replaceChildren();
+  area.hidden = !suggestions.length;
+  if (!suggestions.length) return;
+  const details = node('details');
+  details.append(node('summary', 'How dishes were interpreted'));
+  for (const suggestion of suggestions) {
+    const applied = suggestion.applied_ingredients || [];
+    details.append(node('p', `${suggestion.name} · ${suggestion.dish}: ${applied.join(', ') || 'no additional ingredient preferences'}.`));
+    if (suggestion.excluded_ingredients.length) {
+      details.append(node('p', `Omitted due to restrictions: ${suggestion.excluded_ingredients.join(', ')}.`));
+    }
+  }
+  area.append(details);
+}
+
 async function extractPreferences() {
   if (busy) return;
   invalidate();
   $('review').hidden = true;
   setBusy(true);
-  $('notice').textContent = 'Sending your description to Gemini… Please wait.';
+  $('notice').textContent = 'Interpreting your description and finding meals…';
+  let searchAutomatically = false;
   try {
     const result = await post('/api/parse-preferences', {text: $('description').value});
     draft = result.roommates;
+    renderDishSuggestions(result.dish_suggestions || []);
     showList('questions', 'Resolve these questions in your description or the profiles below:', result.questions);
     showList('unsupported', 'These requests are not enforced by recipe search:', result.unsupported_requests);
     renderPeople();
     $('review').hidden = false;
-    $('notice').textContent = `Extracted with Gemini (${result.model}). Review before searching.`;
+    $('review').open = Boolean(result.questions.length);
+    searchAutomatically = !result.questions.length && result.roommates.length > 0;
+    $('notice').textContent = searchAutomatically
+      ? `Interpreted with Gemini (${result.model}). Finding meals…`
+      : 'Clarify the questions above or edit the interpreted profiles, then find meals.';
   } catch (error) {
     $('notice').textContent = error.message;
   } finally {
     setBusy(false);
   }
+  if (searchAutomatically) await findRecipes();
 }
 
 function emptyPerson() {
-  return {name: `Roommate ${draft.length + 1}`, diet: 'Any', preferences: [], avoid: [], allergies: []};
+  const names = new Set(draft.map(person => person.name.trim().toLowerCase()));
+  let number = 1;
+  while (names.has(`roommate ${number}`)) number++;
+  return {name: `Roommate ${number}`, diet: 'Any', preferences: [], avoid: [], allergies: []};
 }
 
 function openManual() {
@@ -199,8 +225,10 @@ function openManual() {
   if (!draft.length) draft = [emptyPerson()];
   $('questions').hidden = true;
   $('unsupported').hidden = true;
+  renderDishSuggestions([]);
   renderPeople();
   $('review').hidden = false;
+  $('review').open = true;
   $('notice').textContent = 'Manual entry selected. No AI extraction was performed.';
 }
 
@@ -225,6 +253,12 @@ function externalLink(label, url) {
   }
 }
 
+function syncRatingControls(mealId, value) {
+  for (const input of document.querySelectorAll('select[data-meal-id]')) {
+    if (input.dataset.mealId === mealId) input.value = String(value);
+  }
+}
+
 function ratingControl(recipe) {
   const wrapper = node('div');
   const prior = ratings.find(rating => rating.meal_id === recipe.id && rating.household_id === householdId);
@@ -233,13 +267,15 @@ function ratingControl(recipe) {
     ratings = ratings.filter(rating => rating.meal_id !== recipe.id || rating.household_id !== householdId);
     if (value) ratings.push({meal_id: recipe.id, score: Number(value), household_id: householdId, timestamp: new Date().toISOString()});
     ratings = ratings.slice(-500);
+    syncRatingControls(recipe.id, value);
     save();
   }, false);
+  input.dataset.mealId = recipe.id;
   wrapper.append(control('Rate after trying', input));
   return wrapper;
 }
 
-function card(recipe, review = false) {
+function card(recipe) {
   const article = node('article', undefined, 'recipe');
   article.append(node('h3', recipe.title));
   if (recipe.photo) {
@@ -260,7 +296,7 @@ function card(recipe, review = false) {
   for (const reason of recipe.reasons || []) {
     article.append(node('p', `${reason.name}: ${reason.happiness == null ? 'Not scored' : reason.happiness + '% fit'} · Matched: ${(reason.matched || []).join(', ') || 'none'}`));
   }
-  if (review || (recipe.review_notes || []).length) {
+  if ((recipe.review_notes || []).length) {
     article.append(node('p', (recipe.review_notes || []).join(' '), 'callout'));
   }
   const details = node('details');
@@ -299,21 +335,17 @@ function renderFavorites() {
 
 async function findRecipes() {
   if (busy) return;
-  if (!$('confirm').checked) {
-    $('notice').textContent = 'Review the profiles and check the confirmation box before searching.';
-    return;
-  }
   setBusy(true);
-  $('notice').textContent = 'Finding recipes that match the confirmed profiles…';
+  $('notice').textContent = 'Finding recipes for your household…';
   try {
     const result = await post('/api/recommend', {roommates: draft, household_id: householdId, ratings});
     confirmed = structuredClone(draft);
     save();
-    $('cards').replaceChildren(...result.recipes.map(recipe => card(recipe)));
-    $('review-cards').replaceChildren(...result.review_recipes.map(recipe => card(recipe, true)));
-    $('review-heading').hidden = !result.review_recipes.length;
+    const meals = result.recommendations;
+    $('cards').replaceChildren(...meals.map(recipe => card(recipe)));
+    const labelChecks = meals.filter(recipe => (recipe.review_notes || []).length).length;
     $('results').hidden = false;
-    $('result-note').textContent = result.message || `${result.recipes.length} meal ideas · ${result.excluded_by_rules} excluded by screening.`;
+    $('result-note').textContent = `${meals.length} meal ideas · ${result.excluded_by_rules} excluded by screening${labelChecks ? ` · ${labelChecks} with ingredient label-check notes` : ''}.` + (!meals.length && result.message ? ` ${result.message}` : '');
     $('notice').textContent = 'Recipe search complete.';
     $('results').scrollIntoView({behavior: 'smooth'});
   } catch (error) {
@@ -324,9 +356,10 @@ async function findRecipes() {
 }
 
 function clearData() {
-  if (!window.confirm('Clear confirmed profiles, bookmarks, and ratings saved by this version of RMR?')) return;
+  if (!window.confirm('Clear saved profiles, bookmarks, and ratings saved by this version of RMR?')) return;
   confirmed = [];
   draft = [];
+  renderDishSuggestions([]);
   favorites = [];
   ratings = [];
   householdId = crypto.randomUUID();

@@ -69,13 +69,9 @@ class Handler(SimpleHTTPRequestHandler):
             elif self.path == "/api/recommend":
                 result = recommend(data)
 
-            # AGENT 2: New evaluation endpoint
+            # Compatibility route into the same candidate/evaluator pipeline
             elif self.path == "/api/evaluate":
-                result = choose_recipe(
-                    data,
-                    max_attempts=50,
-                    max_results=12
-                )
+                result = choose_recipe(data)
 
         except ValueError as exc:
             return self.reply(400, {

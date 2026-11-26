@@ -2,10 +2,7 @@ import unittest
 from fractions import Fraction
 
 from happiness import (
-    household_happiness_for_recommendations as household_happiness,
-    household_score_for_recommendations as household_score,
-    ranking_key_for_recommendations as ranking_key,
-    score_recipe_for_recommendations as score_recipe,
+    household_happiness, household_score, ranking_key, score_recipe,
 )
 
 

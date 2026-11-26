@@ -30,7 +30,7 @@ def main():
         print('PASS: Google accepted the metadata request and the model advertises generateContent.')
         print('This does not verify generation quota, schema acceptance, or billing tier.')
         if args.extract:
-            result = parse_preferences({'text': 'Alex likes rice.'}, config=config)
+            parse_preferences({'text': 'Alex likes rice.'}, config=config)
             print('PASS: One generation returned structurally valid preferences.')
             print('Semantic accuracy was not checked. Review model outputs before recipe search.')
         else:
