@@ -1,411 +1,379 @@
-"use strict";
+'use strict';
+
+// The browser calls our Python server. Only Python knows the Gemini API key.
 const $ = id => document.getElementById(id);
-const house = $("house"), people = $("people"), cards = $("cards");
-let recipes = [], reviewRecipes = [], chosen = null, generation = 0, controller;
-const split = value => value.split(",").map(s => s.trim()).filter(Boolean);
+const KEY = 'rmr_natural_language_v1';
+const diets = ['Any', 'Vegetarian', 'Vegan', 'Mediterranean', 'Pescatarian', 'Gluten Free'];
+let stored = {};
+try {
+  stored = JSON.parse(localStorage.getItem(KEY) || '{}') || {};
+} catch (_) {
+  // An unavailable or malformed browser save must not block a new session.
+}
+let confirmed = Array.isArray(stored.roommates) ? stored.roommates : [];
+let favorites = Array.isArray(stored.favorites) ? stored.favorites : [];
+let ratings = Array.isArray(stored.ratings) ? stored.ratings : [];
+let householdId = typeof stored.household_id === 'string' ? stored.household_id : crypto.randomUUID();
+let draft = [];
+let busy = false;
+
+function node(tag, text, className) {
+  const element = document.createElement(tag);
+  if (text !== undefined) element.textContent = text;
+  if (className) element.className = className;
+  return element;
+}
+
+function save() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify({roommates: confirmed, favorites, ratings, household_id: householdId}));
+  } catch (_) {
+    $('notice').textContent = 'Browser storage is unavailable. This session still works, but changes may not persist.';
+  }
+}
 
 function invalidate() {
-  hasResultsScreen = false;
-  generation++;
-  if (controller) controller.abort();
-  recipes = []; reviewRecipes = []; chosen = null;
-  $("review-cards").replaceChildren(); $("review-section").hidden = true;
-  cards.replaceChildren();
-  $("find").disabled = false;
-  $("status").textContent = "Choose Find recipes to search with these preferences.";
+  $('confirm').checked = false;
+  $('results').hidden = true;
 }
-function addPerson(focus) {
-  const field = $("profile").content.firstElementChild.cloneNode(true);
-  people.append(field);
-  field.querySelector(".add-preference").onclick = () => addPreference(field);
-  field.querySelector(".remove").onclick = () => {
-    field.remove(); numberProfiles(); invalidate(); saveHousehold(); $("add").focus();
-  };
-  numberProfiles();
-  addPreference(field);
-  if (focus) { invalidate(); saveHousehold(); field.querySelector(".name").focus(); }
+
+function control(label, input) {
+  const wrapper = node('label', label);
+  wrapper.append(input);
+  return wrapper;
 }
-function addPreference(field, ingredient = "", strength = 1) {
-  const row = node("div", undefined, "preference-row");
-  const input = node("input"); input.type="text"; input.maxLength=80;
-  input.placeholder="Ingredient, e.g. mushrooms"; input.value=ingredient;
-  input.setAttribute("aria-label","Ingredient preference");
-  const select=node("select"); select.setAttribute("aria-label","Preference strength");
-  for (const [value,label] of [[0,"Neutral"],[1,"Like"],[2,"Strong like"]]) {
-    const option=node("option",label); option.value=value; option.selected=Number(strength)===value; select.append(option);
-  }
-  const remove=action("Remove",()=>{row.remove();saveHousehold();invalidate();});
-  remove.className="remove-preference";
-  row.append(input,select,remove); field.querySelector(".preferences").append(row);
-}
-function numberProfiles() {
-  [...people.children].forEach((field,i) => {
-    field.querySelector("legend").textContent = "Roommate " + (i+1);
-    field.querySelector(".remove").hidden = people.children.length === 1;
+
+function textInput(value, change, maximum = 80) {
+  const input = node('input');
+  input.value = value;
+  input.maxLength = maximum;
+  input.addEventListener('input', () => {
+    change(input.value);
+    invalidate();
   });
-  $("add").disabled = people.children.length >= 12;
+  return input;
 }
-function node(tag, text, cls) {
-  const el = document.createElement(tag);
-  if (text !== undefined) el.textContent = text;
-  if (cls) el.className = cls;
-  return el;
-}
-function action(label, fn, cls) {
-  const btn = node("button",label,cls); btn.type="button"; btn.onclick=fn; return btn;
-}
-function happinessBadge(value) {
-  if (value === null || value === undefined) return node("strong","Not scored","happiness-score score-neutral");
-  const score=Math.round(Number(value)||0);
-  const level=score<35?"low":score<=60?"medium":"high";
-  return node("strong",score+"%","happiness-score score-"+level);
-}
-function normalizeRecipe(recipe) {
-  if (!recipe) return null;
 
-  const r = { ...recipe };
+function action(text, callback, secondary = true) {
+  const button = node('button', text, secondary ? 'secondary' : '');
+  button.type = 'button';
+  button.addEventListener('click', callback);
+  return button;
+}
 
-  // Convert Agent 2's roommate scores into the
-  // format expected by the existing recipe cards.
-  if (!Array.isArray(r.reasons)) {
-    const scores = r.roommate_scores || [];
-
-    r.reasons = scores.map(p => ({
-      name: p.name || "Roommate",
-      matched: p.matched || [],
-      total: p.total || 0,
-      happiness: p.happiness ?? p.score ?? null,
-      diet: p.diet || "Any"
-    }));
+function select(values, value, change, editing = true) {
+  const input = node('select');
+  for (const [optionValue, label] of values) {
+    const option = node('option', label);
+    option.value = optionValue;
+    input.append(option);
   }
-
-  // Ensure the recipe contains fields render() expects.
-  r.ingredients = Array.isArray(r.ingredients)
-    ? r.ingredients
-    : [];
-
-  r.review_notes = Array.isArray(r.review_notes)
-    ? r.review_notes
-    : [];
-
-  r.happiness = r.happiness == null ? null : Number(r.happiness);
-  r.instructions = r.instructions || "";
-  r.title = r.title || "Untitled recipe";
-
-  return r;
+  input.value = String(value);
+  input.addEventListener('change', () => {
+    change(input.value);
+    if (editing) invalidate();
+  });
+  return input;
 }
-function render() {
-  cards.replaceChildren();
-  const list = chosen ? [chosen] : recipes;
-  $("status").textContent = chosen ? "Your household chose " + chosen.title + "." :
-    list.length && list.every(r=>r.happiness==null) ? "Household happiness cannot be scored yet. Add a like or strong like for at least one roommate." :
-    list.length && list.every(r=>r.happiness===0) ? "No recipe has a positive household taste score. Add ingredients your roommates like or adjust preference strengths to improve the ranking." :
-    list.length ? list.length + (list.length === 1 ? " recipe ranked" : " recipes ranked") + " by household taste fit. Best match first." :
-    "You’ve skipped every match. Adjust your preferences or start a new search.";
-  if (!chosen && !recipes.length && reviewRecipes.length)
-    $("status").textContent = "Review the flagged ingredients in the recipes below.";
-  $("review-cards").replaceChildren();
-  $("review-section").hidden = !!chosen || !reviewRecipes.length;
-  for (const r of chosen ? list : [...list, ...reviewRecipes]) {
-    const flagged = !!r.review_notes?.length;
-    const card = node("article",undefined,"card");
-    if (r.photo && r.photo.startsWith("https://")) {
-      const img = node("img"); img.alt=""; img.loading="lazy"; img.src=r.photo;
-      img.onerror=()=>img.remove(); card.append(img);
-    }
-    const body=node("div",undefined,"content");
-    body.append(node("div",[r.area,r.category].filter(Boolean).join(" · "),"meta"),node("h3",r.title));
-    const householdScore=node("p",undefined,"happiness");
-    householdScore.append(node("span","Household happiness: "),happinessBadge(r.happiness),
-      node("span",r.happiness==null?" (no preferences to score)":" household fit"));
-    body.append(householdScore);
-    const reasons=node("ul",undefined,"reasons");
-    for(const p of (r.reasons || [])) {
-      let why=p.total ? (p.matched.length ? "matched " + p.matched.join(", ") : "no listed preferences matched") : "no preferences specified";
-      if(p.diet!=="Any") why+=" · fits "+p.diet.toLowerCase()+" filter";
-      const reason=node("li");
-      reason.append(document.createTextNode(p.name+" — "+why+" · "),happinessBadge(p.happiness),document.createTextNode(" happiness"));
-      reasons.append(reason);
-    }
-    body.append(reasons);
-    for (const note of r.review_notes || []) body.append(node("p", note, "review-note"));
-    const details=node("details"); details.open=Boolean(chosen);
-    details.append(node("summary","Ingredients & instructions"));
-    const ingredients=node("ul");
-    (r.ingredients || []).forEach(item => {
-      ingredients.append(
-        node("li", [item.measure, item.name].filter(Boolean).join(" "))
-      );
-    });
-    const link=node("a","View on TheMealDB"); link.href=r.url; link.target="_blank"; link.rel="noopener";
-    details.append(ingredients,node("p",r.instructions,"instructions"),link);
-    const actions=node("div",undefined,"actions");
-    if(chosen) actions.append(action("Back to matches",()=>{chosen=null;render();}));
-    else {
-      if (!flagged) actions.append(action("Choose this recipe",()=>{chosen=r; render();},"primary"));
-      actions.append(action("Skip",()=>{
-        recipes=recipes.filter(x=>x.id!==r.id);
-        reviewRecipes=reviewRecipes.filter(x=>x.id!==r.id);
-        render();
-      }));
-    }
-    actions.append(action(favorites.some(f=>f.id===r.id) ? "Remove favorite" : "Save favorite",
-      ()=>toggleFavorite(r)));
-    const ratingRow=node("div",undefined,"rating-row");
-    const savedRating=getRating(r.id);
-    const ratingSelect=node("select"); ratingSelect.setAttribute("aria-label","Rate this recipe from 1 to 5 stars");
-    const emptyRating=node("option","Rate this recipe"); emptyRating.value=""; ratingSelect.append(emptyRating);
-    for(let value=1;value<=5;value++){
-      const option=node("option","★".repeat(value)+" ("+value+")");
-      option.value=value; option.selected=Number(savedRating?.score)===value; ratingSelect.append(option);
-    }
-    ratingRow.append(ratingSelect,action(savedRating?"Update rating":"Save rating",()=>{
-      if(ratingSelect.value)saveRating(r.id,Number(ratingSelect.value));
-    }));
-    if(savedRating){ratingRow.append(action("Remove rating",()=>removeRating(r.id)),node("span","Household rating: "+savedRating.score+"/5"));}
-    body.append(ratingRow);
-    body.append(details,actions);card.append(body);(flagged ? $("review-cards") : cards).append(card);
-  }
+
+function listInput(values, change) {
+  const input = node('textarea');
+  input.rows = 2;
+  input.value = values.join('\n');
+  input.placeholder = 'One ingredient per line';
+  input.maxLength = 1700;
+  input.addEventListener('input', () => {
+    change(input.value.split('\n').map(value => value.trim()).filter(Boolean));
+    invalidate();
+  });
+  return input;
 }
-let hasResultsScreen = false;
-function showScreen(screen) {
-  $("entry").hidden=screen!=="entry";
-  $("results").hidden=screen!=="results";
-  $("happiness-page").hidden=screen!=="happiness";
-  document.title=screen==="results"?"Recipe matches · RMR":screen==="happiness"?"How recommendations work · RMR":"RMR · Roommate Meal Resolutions";
-  window.scrollTo(0, 0);
-  if(screen==="results")$("results-title").focus();
-  else if(screen==="happiness")$("happiness-title").focus();
-  else people.querySelector(".name").focus();
-}
-function syncScreen() {
-  if (location.hash === "#results" && !hasResultsScreen)
-    history.replaceState(null, "", location.pathname + location.search);
-  showScreen(location.hash==="#happiness"?"happiness":location.hash==="#results"&&hasResultsScreen?"results":"entry");
-}
-window.addEventListener("popstate", syncScreen);
-window.addEventListener("hashchange",syncScreen);
-document.querySelectorAll(".how-link").forEach(button=>{
-  button.onclick=()=>{history.pushState(null,"","#happiness");syncScreen();};
-});
-$("happiness-back").onclick=()=>history.back();
-$("edit").onclick = () => history.back();
-house.oninput = () => { invalidate(); saveHousehold(); };
-house.onchange = () => { invalidate(); saveHousehold(); };
-$("add").onclick=()=>addPerson(true);
-house.onsubmit = async event => {
-  event.preventDefault();
 
-  invalidate();
-  const token = generation;
-
-  controller = new AbortController();
-
-  const request = householdForm();
-  request.household_id = householdId();
-  request.ratings = loadRatings();
-
-  const roommates = request.roommates;
-
-  $("find").disabled = true;
-  $("status").textContent =
-    "Searching TheMealDB and comparing ingredients…";
-
-  $("screen-note").hidden = !roommates.some(
-    p => p.allergies.length || p.diet === "Gluten Free"
-  );
-
-  hasResultsScreen = true;
-  history.pushState(null, "", "#results");
-  showScreen("results");
-
-  try {
-    // Send the household data to Agent 1, which applies the household happiness formula.
-    const res = await fetch("/api/recommend", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(request),
-      signal: controller.signal
-    });
-
-    // Read Agent 1's ranked recipe results
-    const data = await res.json();
-
-    console.log("Agent 1 response:", data);
-
-    // Ignore outdated requests
-    if (token !== generation) return;
-
-    // Handle server errors
-    if (!res.ok) {
-      $("status").textContent =
-        data.message || `Request failed (${res.status}).`;
-      return;
-    }
-
-    // Agent 2 returns one recipe.
-    // Agent 1 returns an array of recipes.
-    const accepted = Array.isArray(data.recipes)
-      ? data.recipes
-      : data.recipe
-        ? [data.recipe]
-        : [];
-
-    // Normalize recipe data for the existing UI
-    recipes = accepted
-      .map(normalizeRecipe)
-      .filter(Boolean);
-
-    reviewRecipes = (data.review_recipes || [])
-      .map(normalizeRecipe)
-      .filter(Boolean);
-
-    // Handle no matching recipes
-    if (!recipes.length && !reviewRecipes.length) {
-      $("status").textContent =
-        data.message || "No verified recipe found.";
-      return;
-    }
-
-    // Display the accepted recipes
-    render();
-
-  } catch (err) {
-    // Ignore requests canceled by changing preferences
-    if (err.name === "AbortError") return;
-
-    console.error(
-      "Recipe request or rendering failed:",
-      err
+function renderPeople() {
+  $('people').replaceChildren();
+  draft.forEach((person, index) => {
+    const box = node('div', undefined, 'person');
+    box.append(node('h3', `Roommate ${index + 1}`));
+    const grid = node('div', undefined, 'grid');
+    grid.append(
+      control('Name', textInput(person.name, value => person.name = value, 50)),
+      control('Diet', select(diets.map(value => [value, value]), person.diet, value => person.diet = value))
     );
-
-    if (token === generation) {
-      $("status").textContent =
-        "Could not display recipe. Check the browser Console (F12) for details.";
-    }
-
-  } finally {
-    if (token === generation) {
-      $("find").disabled = false;
-    }
-  }
-};
-// Keep these original keys so existing RMR households and bookmarks load after the rename.
-const HOUSE_KEY = "shared-table.household.v1";
-const FAV_KEY = "shared-table.favorites.v1";
-const HOUSEHOLD_ID_KEY = "rmr.household-id.v1";
-const RATINGS_KEY = "rmr.recipe-ratings.v1";
-const fields = ["name", "diet", "avoid", "allergies"];
-function readSave(key, fallback) {
-  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
-  catch { $("save-status").textContent = "Saved data could not be loaded in this browser."; return fallback; }
+    box.append(grid, node('h4', 'Ingredient preferences'));
+    person.preferences.forEach((preference, preferenceIndex) => {
+      const row = node('div', undefined, 'preference');
+      const ingredient = textInput(preference.ingredient, value => preference.ingredient = value);
+      ingredient.setAttribute('aria-label', `${person.name} preference ingredient ${preferenceIndex + 1}`);
+      const strength = select([[0, 'Neutral'], [1, 'Like'], [2, 'Strong like']], preference.strength,
+        value => preference.strength = Number(value));
+      strength.setAttribute('aria-label', `${person.name} preference strength ${preferenceIndex + 1}`);
+      const remove = action('×', () => {
+        person.preferences.splice(preferenceIndex, 1);
+        invalidate();
+        renderPeople();
+      });
+      remove.setAttribute('aria-label', 'Remove preference');
+      row.append(ingredient, strength, remove);
+      box.append(row);
+    });
+    box.append(action('Add ingredient preference', () => {
+      if (person.preferences.length >= 20) return;
+      person.preferences.push({ingredient: '', strength: 1});
+      invalidate();
+      renderPeople();
+    }));
+    box.append(
+      control('Always exclude / disliked ingredients (one per line)', listInput(person.avoid, value => person.avoid = value)),
+      control('Explicit allergies (one per line)', listInput(person.allergies, value => person.allergies = value)),
+      action('Remove roommate', () => {
+        draft.splice(index, 1);
+        invalidate();
+        renderPeople();
+      })
+    );
+    $('people').append(box);
+  });
 }
-function writeSave(key, value) {
+
+async function post(path, data) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  });
+  let result;
   try {
-    localStorage.setItem(key, JSON.stringify(value));
-    $("save-status").textContent = "Saved in this browser.";
-    return true;
-  } catch {
-    $("save-status").textContent = "Could not save changes. Check browser storage settings or free some space.";
-    return false;
+    result = await response.json();
+  } catch (_) {
+    throw Error('The server returned an unreadable response.');
+  }
+  if (!response.ok) throw Error(result.message || 'Request failed.');
+  return result;
+}
+
+function setBusy(value) {
+  busy = value;
+  for (const id of ['extract', 'manual', 'search', 'add', 'clear']) $(id).disabled = value;
+  $('review').inert = value;
+  $('description').disabled = value;
+}
+
+function showList(id, title, items) {
+  const box = $(id);
+  box.replaceChildren();
+  box.hidden = !items.length;
+  if (!items.length) return;
+  box.append(node('strong', title));
+  const list = node('ul');
+  for (const item of items) list.append(node('li', item));
+  box.append(list);
+}
+
+async function extractPreferences() {
+  if (busy) return;
+  invalidate();
+  $('review').hidden = true;
+  setBusy(true);
+  $('notice').textContent = 'Sending your description to Gemini… Please wait.';
+  try {
+    const result = await post('/api/parse-preferences', {text: $('description').value});
+    draft = result.roommates;
+    showList('questions', 'Resolve these questions in your description or the profiles below:', result.questions);
+    showList('unsupported', 'These requests are not enforced by recipe search:', result.unsupported_requests);
+    renderPeople();
+    $('review').hidden = false;
+    $('notice').textContent = `Extracted with Gemini (${result.model}). Review before searching.`;
+  } catch (error) {
+    $('notice').textContent = error.message;
+  } finally {
+    setBusy(false);
   }
 }
-function draft() {
-  const roommates=[...people.children].map(field=>({
-    ...Object.fromEntries(fields.map(k=>[k,field.querySelector("."+k).value])),
-    preferences:[...field.querySelectorAll(".preference-row")].map(row=>({
-      ingredient:row.querySelector("input").value.trim(),
-      strength:Number(row.querySelector("select").value),
-    })).filter(p=>p.ingredient),
-  }));
-  return {roommates};
+
+function emptyPerson() {
+  return {name: `Roommate ${draft.length + 1}`, diet: 'Any', preferences: [], avoid: [], allergies: []};
 }
-function householdForm() {
-  const data = draft();
-  for (const person of data.roommates) {
-    for (const field of ["avoid","allergies"]) person[field] = split(person[field]);
+
+function openManual() {
+  invalidate();
+  if (!draft.length) draft = [emptyPerson()];
+  $('questions').hidden = true;
+  $('unsupported').hidden = true;
+  renderPeople();
+  $('review').hidden = false;
+  $('notice').textContent = 'Manual entry selected. No AI extraction was performed.';
+}
+
+function addPerson() {
+  if (draft.length >= 12) return;
+  draft.push(emptyPerson());
+  invalidate();
+  renderPeople();
+}
+
+function externalLink(label, url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return node('span', label);
+    const link = node('a', label);
+    link.href = parsed.href;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    return link;
+  } catch (_) {
+    return node('span', label);
   }
-  return data;
 }
-function saveHousehold() { writeSave(HOUSE_KEY, draft()); }
-function householdId(){
-  let id=localStorage.getItem(HOUSEHOLD_ID_KEY);
-  if(!id){id=globalThis.crypto?.randomUUID?.()||"rmr-"+Date.now().toString(36)+Math.random().toString(36).slice(2);localStorage.setItem(HOUSEHOLD_ID_KEY,id);}
-  return id;
+
+function ratingControl(recipe) {
+  const wrapper = node('div');
+  const prior = ratings.find(rating => rating.meal_id === recipe.id && rating.household_id === householdId);
+  const options = [['', 'Not rated'], [1, '1 / 5'], [2, '2 / 5'], [3, '3 / 5'], [4, '4 / 5'], [5, '5 / 5']];
+  const input = select(options, prior ? prior.score : '', value => {
+    ratings = ratings.filter(rating => rating.meal_id !== recipe.id || rating.household_id !== householdId);
+    if (value) ratings.push({meal_id: recipe.id, score: Number(value), household_id: householdId, timestamp: new Date().toISOString()});
+    ratings = ratings.slice(-500);
+    save();
+  }, false);
+  wrapper.append(control('Rate after trying', input));
+  return wrapper;
 }
-function loadRatings(){
-  try{
-    const id=householdId(),rows=JSON.parse(localStorage.getItem(RATINGS_KEY)||"[]");
-    return Array.isArray(rows)?rows.filter(r=>r?.household_id===id&&/^\d+$/.test(r.meal_id)&&Number.isInteger(r.score)&&r.score>=1&&r.score<=5):[];
-  }catch{return [];}
-}
-function getRating(mealId){return loadRatings().find(r=>r.meal_id===mealId);}
-function saveRating(mealId,score){
-  const id=householdId(),rows=loadRatings().filter(r=>r.meal_id!==mealId);
-  rows.push({household_id:id,meal_id:mealId,score,timestamp:new Date().toISOString()});
-  if(writeSave(RATINGS_KEY,rows))house.requestSubmit();
-}
-function removeRating(mealId){
-  const rows=loadRatings().filter(r=>r.meal_id!==mealId);
-  if(writeSave(RATINGS_KEY,rows))house.requestSubmit();
-}
-function loadHousehold() {
-  const data = readSave(HOUSE_KEY, null);
-  if (!Array.isArray(data?.roommates) || !data.roommates.length) {
-    addPerson(false); addPerson(false); return;
-  }
-  for (const profile of data.roommates.slice(0,12)) {
-    addPerson(false);
-    for (const k of fields) {
-      if (typeof profile?.[k] === "string") people.lastElementChild.querySelector("."+k).value = profile[k];
-    }
-    if(Array.isArray(profile?.preferences)){
-      people.lastElementChild.querySelector(".preferences").replaceChildren();
-      for(const pref of profile.preferences){
-        if(typeof pref?.ingredient==="string")addPreference(people.lastElementChild,pref.ingredient,[0,1,2].includes(pref.strength)?pref.strength:pref.strength<0?0:1);
+
+function card(recipe, review = false) {
+  const article = node('article', undefined, 'recipe');
+  article.append(node('h3', recipe.title));
+  if (recipe.photo) {
+    try {
+      const url = new URL(recipe.photo);
+      if (url.protocol === 'https:') {
+        const image = node('img');
+        image.src = url.href;
+        image.alt = recipe.title;
+        image.loading = 'lazy';
+        article.append(image);
       }
-    }else if(typeof profile?.likes==="string"){
-      people.lastElementChild.querySelector(".preferences").replaceChildren();
-      split(profile.likes).forEach(ingredient=>addPreference(people.lastElementChild,ingredient,1));
+    } catch (_) {
+      // A bad optional image URL must not hide the recipe.
     }
-    if (profile?.allergies) people.lastElementChild.querySelector(".allergy").open = true;
+  }
+  article.append(node('p', recipe.happiness == null ? 'No preference score' : `Household fit: ${recipe.happiness}%`, 'score'));
+  for (const reason of recipe.reasons || []) {
+    article.append(node('p', `${reason.name}: ${reason.happiness == null ? 'Not scored' : reason.happiness + '% fit'} · Matched: ${(reason.matched || []).join(', ') || 'none'}`));
+  }
+  if (review || (recipe.review_notes || []).length) {
+    article.append(node('p', (recipe.review_notes || []).join(' '), 'callout'));
+  }
+  const details = node('details');
+  details.append(node('summary', 'Ingredients & instructions'));
+  const ingredients = node('ul');
+  for (const ingredient of recipe.ingredients || []) {
+    ingredients.append(node('li', `${ingredient.measure} ${ingredient.name}`));
+  }
+  details.append(ingredients, node('p', recipe.instructions, 'instructions'), externalLink('Original recipe on TheMealDB', recipe.url));
+  article.append(details);
+  const bookmark = action(favorites.some(item => item.id === recipe.id) ? 'Saved' : 'Save favorite', () => {
+    if (!favorites.some(item => item.id === recipe.id)) {
+      favorites.push({id: recipe.id, title: recipe.title, url: recipe.url});
+      save();
+      renderFavorites();
+    }
+    bookmark.textContent = 'Saved';
+  });
+  article.append(bookmark, ratingControl(recipe));
+  return article;
+}
+
+function renderFavorites() {
+  $('favorites').replaceChildren();
+  if (!favorites.length) $('favorites').append(node('p', 'Your saved meals will appear here.'));
+  for (const recipe of favorites) {
+    const box = node('div', undefined, 'saved');
+    box.append(externalLink(recipe.title, recipe.url), ratingControl(recipe), action('Remove', () => {
+      favorites = favorites.filter(item => item.id !== recipe.id);
+      save();
+      renderFavorites();
+    }));
+    $('favorites').append(box);
   }
 }
-function loadFavorites() {
-  const saved = readSave(FAV_KEY, []);
-  return Array.isArray(saved) ? saved.filter(r => /^\d+$/.test(r?.id) && typeof r.title === "string") : [];
-}
-let favorites = loadFavorites();
-function toggleFavorite(recipe) {
-  const current = loadFavorites();
-  const removing = current.some(r=>r.id===recipe.id);
-  const next = removing ? current.filter(r=>r.id!==recipe.id) : [...current,{id:recipe.id,title:recipe.title}];
-  if (writeSave(FAV_KEY, next)) {
-    favorites = next;
-    renderBookmarks();
-    if (!$("results").hidden) render();
+
+async function findRecipes() {
+  if (busy) return;
+  if (!$('confirm').checked) {
+    $('notice').textContent = 'Review the profiles and check the confirmation box before searching.';
+    return;
+  }
+  setBusy(true);
+  $('notice').textContent = 'Finding recipes that match the confirmed profiles…';
+  try {
+    const result = await post('/api/recommend', {roommates: draft, household_id: householdId, ratings});
+    confirmed = structuredClone(draft);
+    save();
+    $('cards').replaceChildren(...result.recipes.map(recipe => card(recipe)));
+    $('review-cards').replaceChildren(...result.review_recipes.map(recipe => card(recipe, true)));
+    $('review-heading').hidden = !result.review_recipes.length;
+    $('results').hidden = false;
+    $('result-note').textContent = result.message || `${result.recipes.length} meal ideas · ${result.excluded_by_rules} excluded by screening.`;
+    $('notice').textContent = 'Recipe search complete.';
+    $('results').scrollIntoView({behavior: 'smooth'});
+  } catch (error) {
+    $('notice').textContent = error.message;
+  } finally {
+    setBusy(false);
   }
 }
-function renderBookmarks() {
-  const list = $("bookmarks");
-  list.replaceChildren();
-  if (!favorites.length) list.append(node("p","Recipes you save will appear here."));
-  for (const r of favorites) {
-    const row = node("div",undefined,"bookmark");
-    const link = node("a",r.title);
-    link.href = "https://www.themealdb.com/meal/" + r.id;
-    link.target = "_blank"; link.rel = "noopener";
-    row.append(link,action("Remove",()=>toggleFavorite(r))); list.append(row);
+
+function clearData() {
+  if (!window.confirm('Clear confirmed profiles, bookmarks, and ratings saved by this version of RMR?')) return;
+  confirmed = [];
+  draft = [];
+  favorites = [];
+  ratings = [];
+  householdId = crypto.randomUUID();
+  try { localStorage.removeItem(KEY); } catch (_) {}
+  $('review').hidden = true;
+  $('results').hidden = true;
+  $('description').value = '';
+  $('notice').textContent = 'Saved data cleared.';
+  renderFavorites();
+}
+
+// This reads local settings only; it does not spend a Gemini request.
+async function checkSetup(manual = false) {
+  const button = $('check-setup');
+  const message = $('ai-status');
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = 'Checking…';
+  message.textContent = 'Checking local Gemini configuration…';
+  message.setAttribute('aria-busy', 'true');
+  try {
+    const response = await fetch('/api/ai-status', {cache: 'no-store'});
+    if (!response.ok) throw Error('Setup status unavailable.');
+    const status = await response.json();
+    const checkedAt = new Date().toLocaleTimeString();
+    message.textContent = `Local check completed at ${checkedAt}. Gemini (${status.model}): ${status.message}`;
+  } catch (_) {
+    message.textContent = 'Setup check failed. Confirm that the RMR server is running, then try again.';
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Check setup';
+    message.setAttribute('aria-busy', 'false');
+    if (manual) message.scrollIntoView({behavior: 'smooth', block: 'nearest'});
   }
 }
-window.addEventListener("storage", e=>{
-  if (e.key===FAV_KEY || e.key===null) {
-    favorites=loadFavorites(); renderBookmarks();
-    if (!$("results").hidden && (recipes.length || reviewRecipes.length)) render();
-  }
-});
-loadHousehold();
-renderBookmarks();
-syncScreen();
+
+$('description').addEventListener('input', invalidate);
+$('extract').addEventListener('click', extractPreferences);
+$('manual').addEventListener('click', openManual);
+$('add').addEventListener('click', addPerson);
+$('search').addEventListener('click', findRecipes);
+$('clear').addEventListener('click', clearData);
+$('check-setup').addEventListener('click', () => checkSetup(true));
+if (confirmed.length) {
+  draft = structuredClone(confirmed);
+  renderPeople();
+  $('review').hidden = false;
+}
+renderFavorites();
+checkSetup();

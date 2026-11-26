@@ -1,0 +1,355 @@
+[
+  {
+    "id": "case_01",
+    "text": "Alex likes rice.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Alex",
+          "diet": "Any",
+          "preferences": [
+            {
+              "ingredient": "rice",
+              "strength": 1
+            }
+          ],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_02",
+    "text": "Alex loves mushrooms.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Alex",
+          "diet": "Any",
+          "preferences": [
+            {
+              "ingredient": "mushrooms",
+              "strength": 2
+            }
+          ],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_03",
+    "text": "Alex says rice is fine.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Alex",
+          "diet": "Any",
+          "preferences": [
+            {
+              "ingredient": "rice",
+              "strength": 0
+            }
+          ],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_04",
+    "text": "Alex hates olives.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Alex",
+          "diet": "Any",
+          "preferences": [],
+          "avoid": [
+            "olives"
+          ],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_05",
+    "text": "Alex is allergic to peanuts.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Alex",
+          "diet": "Any",
+          "preferences": [],
+          "avoid": [],
+          "allergies": [
+            "peanuts"
+          ]
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_06",
+    "text": "Alex is vegetarian and likes rice.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Alex",
+          "diet": "Vegetarian",
+          "preferences": [
+            {
+              "ingredient": "rice",
+              "strength": 1
+            }
+          ],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_07",
+    "text": "Sam is vegan and loves chickpeas.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Sam",
+          "diet": "Vegan",
+          "preferences": [
+            {
+              "ingredient": "chickpeas",
+              "strength": 2
+            }
+          ],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_08",
+    "text": "Jordan is pescatarian and likes salmon.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Jordan",
+          "diet": "Pescatarian",
+          "preferences": [
+            {
+              "ingredient": "salmon",
+              "strength": 1
+            }
+          ],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_09",
+    "text": "Taylor follows a gluten-free diet and loves potatoes.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Taylor",
+          "diet": "Gluten Free",
+          "preferences": [
+            {
+              "ingredient": "potatoes",
+              "strength": 2
+            }
+          ],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_10",
+    "text": "Casey follows a Mediterranean diet and likes tomatoes.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Casey",
+          "diet": "Mediterranean",
+          "preferences": [
+            {
+              "ingredient": "tomatoes",
+              "strength": 1
+            }
+          ],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_11",
+    "text": "Alex likes rice. Jordan loves mushrooms and hates olives.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Alex",
+          "diet": "Any",
+          "preferences": [
+            {
+              "ingredient": "rice",
+              "strength": 1
+            }
+          ],
+          "avoid": [],
+          "allergies": []
+        },
+        {
+          "name": "Jordan",
+          "diet": "Any",
+          "preferences": [
+            {
+              "ingredient": "mushrooms",
+              "strength": 2
+            }
+          ],
+          "avoid": [
+            "olives"
+          ],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_12",
+    "text": "Alex is vegan and allergic to peanuts. Jordan is vegetarian and loves spinach.",
+    "expected": {
+      "roommates": [
+        {
+          "name": "Alex",
+          "diet": "Vegan",
+          "preferences": [],
+          "avoid": [],
+          "allergies": [
+            "peanuts"
+          ]
+        },
+        {
+          "name": "Jordan",
+          "diet": "Vegetarian",
+          "preferences": [
+            {
+              "ingredient": "spinach",
+              "strength": 2
+            }
+          ],
+          "avoid": [],
+          "allergies": []
+        }
+      ],
+      "clarification": false,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_13",
+    "text": "Alex says dairy bothers them.",
+    "expected": {
+      "roommates": null,
+      "clarification": true,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_14",
+    "text": "Alex and Jordan eat together. One of them is allergic to peanuts.",
+    "expected": {
+      "roommates": null,
+      "clarification": true,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_15",
+    "text": "Alex likes rice. Dinner must cost less than $10.",
+    "expected": {
+      "roommates": null,
+      "clarification": false,
+      "unsupported": true
+    }
+  },
+  {
+    "id": "case_16",
+    "text": "Alex likes rice. Dinner must take less than 15 minutes.",
+    "expected": {
+      "roommates": null,
+      "clarification": false,
+      "unsupported": true
+    }
+  },
+  {
+    "id": "case_17",
+    "text": "Alex likes rice and wants low-calorie meals.",
+    "expected": {
+      "roommates": null,
+      "clarification": false,
+      "unsupported": true
+    }
+  },
+  {
+    "id": "case_18",
+    "text": "Alex is vegan and pescatarian.",
+    "expected": {
+      "roommates": null,
+      "clarification": true,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_19",
+    "text": "Alex is allergic to peanuts but also loves peanut butter.",
+    "expected": {
+      "roommates": null,
+      "clarification": true,
+      "unsupported": false
+    }
+  },
+  {
+    "id": "case_20",
+    "text": "Please help with dinner.",
+    "expected": {
+      "roommates": null,
+      "clarification": true,
+      "unsupported": false
+    }
+  }
+]

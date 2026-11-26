@@ -1,31 +1,21 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RMR · Roommate Meal Resolutions</title><link rel="stylesheet" href="style.css"><script src="app.js" defer></script></head>
-<body>
-<header><div class="brand"><span aria-hidden="true" class="mark">✳</span> RMR</div><span class="brand-name">Roommate Meal Resolutions</span></header>
-<main>
-<p id="save-status" class="hint" role="status"></p><div id="entry"><section class="intro"><h1>What’s for dinner?</h1><p>Find a recipe that works for the people at your table.</p></section>
-<p><button type="button" class="how-link">How recommendations work</button></p>
-<div class="household-layout"><form id="house"><div class="sectionhead"><h2>Your roommates</h2><button type="button" class="light" id="add">+ Add roommate</button></div>
-<p class="hint">Separate ingredient names with commas.</p>
-<div id="people"></div>
-<button class="primary" id="find" type="submit">Find recipes <span aria-hidden="true">→</span></button>
-</form>
-<aside id="favorites" aria-labelledby="fav-title"><h2 id="fav-title">Saved recipes</h2>
-<p class="hint">Saved bookmarks. Run a fresh search to check a recipe against your current household.</p>
-<div id="bookmarks"></div></aside></div></div>
-<section id="results" hidden class="results" aria-labelledby="results-title"><div class="sectionhead"><button type="button" id="edit">← Edit household</button><button type="button" class="how-link">How recommendations work</button></div><div class="sectionhead"><h1 tabindex="-1" id="results-title">Recipe matches</h1><span class="source">TheMealDB</span></div>
-<p id="status" role="status" aria-live="polite">Enter your household’s preferences, then choose Find recipes.</p>
-<ul class="score-legend" aria-label="Happiness score colors"><li><strong class="happiness-score score-low">Below 35%</strong> low fit</li><li><strong class="happiness-score score-medium">35–60%</strong> partial fit</li><li><strong class="happiness-score score-high">Above 60%</strong> strong fit</li></ul>
-<p id="screen-note" class="hint" hidden>Ingredient screening uses the recipe text. Check product labels and kitchen cross-contact before cooking.</p><div id="cards"></div><section id="review-section" hidden><h2>Ingredients to verify</h2><p>Check the items flagged on each recipe before deciding whether to cook it.</p><div id="review-cards"></div></section></section>
-<section id="happiness-page" hidden class="happiness-page" aria-labelledby="happiness-title"><button type="button" id="happiness-back">← Back</button><div class="intro"><h1 tabindex="-1" id="happiness-title">How recommendations work</h1><p>RMR compares recipe ingredients with the household’s taste preferences and uses those matches to order recipe suggestions.</p></div><article class="info-card"><h2>Taste and restrictions</h2><p>Ingredient preferences help identify meals that suit the people at the table. A matched neutral ingredient adds modest fit, while a neutral ingredient absent from the recipe does not lower the score. Likes and strong likes count more.</p><p>Allergies, diet rules, and ingredients in “Always exclude” are checked before recipe ranking. Those restrictions can remove a recipe even when its other ingredients match the household’s tastes. A roommate with no matching preferences for a recipe is shown as “Not scored”; their missing match lowers household happiness, and recipes matching more roommates rank first.</p></article><article class="info-card"><h2>Scores and feedback</h2><p>Colored percentages summarize how well a recipe fits the listed household preferences. They are estimates based on the recipe information provided by TheMealDB, so check ingredients and product labels before cooking.</p><p>Household ratings on recipes already tried can also help order future results. Ratings are saved separately from bookmarks, and some unrated recipes remain in the results so the household can discover new meals.</p><p class="score-legend-note">Score colors: red is a low fit, yellow is a partial fit, and green is a strong fit.</p></article></section>
-</main>
-<template id="profile"><fieldset><legend>Roommate</legend>
-<div class="row"><label>Name<input class="name" maxlength="50" placeholder="First name or nickname" required></label><label>Diet<select class="diet"><option>Any</option><option>Vegetarian</option><option>Vegan</option><option>Mediterranean</option><option>Pescatarian</option><option>Gluten Free</option></select></label></div>
-<div class="taste-header"><strong>Taste preferences</strong><button type="button" class="add-preference">+ Add ingredient</button></div>
-<p class="hint">Choose neutral, like, or strong like for each ingredient. Use “Always exclude” for ingredients that must not appear.</p><div class="preferences"></div>
-<label>Always exclude (hard filter)<input class="avoid" placeholder="e.g. olives, onions"></label>
-<details class="allergy"><summary>Food allergies</summary><p>Supported groups include milk, eggs, peanuts, tree nuts, soy, sesame, wheat, fish and shellfish. You can also enter individual ingredients. For other allergy names we check the words you enter and flag recipes for individual review.</p><label>Allergies to exclude<input class="allergies" placeholder="e.g. peanuts"></label></details>
-<button class="remove" type="button">Remove roommate</button>
-</fieldset></template>
-</body></html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>RMR · Roommate Meal Resolutions</title><link rel="stylesheet" href="style.css"><script src="app.js" defer></script></head>
+<body><header><span class="eyebrow">ROOMMATE MEAL RESOLUTIONS</span><h1>RMR</h1><p>A meal everyone can agree on.</p></header>
+<main><div>
+<section aria-labelledby="input-title"><h2 id="input-title">Tell us about your household</h2><p>Describe each roommate’s diet, favorite ingredients, dislikes, and any explicitly known allergies.</p>
+<label for="description">Household description</label><textarea id="description" rows="6" maxlength="6000" placeholder="Alex is vegetarian and loves mushrooms. Jordan likes rice and tomatoes, hates olives, and is allergic to peanuts."></textarea>
+<p class="hint">Your description is sent to Google’s Gemini API for extraction. Use nicknames and only the information needed for meal planning. Recipe searches use TheMealDB online.</p>
+<div class="actions"><button id="extract">Review AI preferences</button><button id="manual" class="secondary">Enter preferences manually</button></div>
+<p id="notice" role="status" aria-live="polite"></p>
+<p id="ai-status" class="hint" role="status">Checking Gemini configuration…</p>
+<details><summary>Set up Gemini’s free-tier API</summary><ol><li>Create your own key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>.</li><li>Use a Google project on the Free tier, without billing enabled. Free availability and quotas depend on Google and your account.</li><li>Copy <code>.env.example</code> to <code>.env</code> beside <code>main.py</code> and set <code>GEMINI_API_KEY</code>. Keep this file private.</li><li>Click <strong>Check setup</strong>, then enter your description above. The setup check does not send a model request.</li></ol><button id="check-setup" class="secondary">Check setup</button><p>No model download, GPU, or Ollama installation is needed. Google may use free-tier content to improve its products under its terms. The app cannot verify your project’s billing tier; check it in AI Studio. See README.md for full setup instructions.</p></details>
+</section>
+<section id="review" hidden aria-labelledby="review-title"><h2 id="review-title">Check the interpretation</h2><p>AI can miss or misread restrictions. Correct every profile before searching. A new description replaces this draft; it does not merge with previous profiles.</p>
+<div id="questions" class="callout" hidden></div><div id="unsupported" class="callout" hidden></div><div id="people"></div>
+<button id="add" class="secondary">Add roommate</button>
+<label class="check"><input type="checkbox" id="confirm"> I checked all profiles, resolved any questions, and understand that unsupported requests are not enforced.</label>
+<button id="search">Confirm &amp; find recipes</button></section>
+<section id="results" hidden aria-labelledby="results-title"><h2 id="results-title">Meal ideas</h2><p>Fit scores are formula-based preference matches, not predicted satisfaction or safety guarantees. Check ingredient labels and cross-contact before serving.</p><p id="result-note" role="status"></p><div id="cards"></div><h3 id="review-heading" hidden>Ingredients to verify</h3><div id="review-cards"></div></section>
+</div><aside><h2>Saved recipes</h2><p class="hint">Bookmarks, ratings, and confirmed profiles stay in this browser. Your written description is not saved.</p><div id="favorites"></div><button id="clear" class="secondary">Clear this app’s saved data</button></aside></main>
+<footer>RMR · Class project · Gemini-assisted meal ideas</footer></body></html>
