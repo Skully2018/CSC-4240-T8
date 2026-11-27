@@ -1,210 +1,147 @@
-from diet_rules import (ALIASES, GF_QUALIFIED, GF_SIMPLE, SIMPLE, base_name,
-                        key, mentions, screen)
-from happiness import (
-    household_happiness,
-    score_recipe,
-    ranking_key
+"""Validate and score the recipe agent's candidates; never run a second search."""
+from diet_rules import (
+    ALIASES, GROUPS, GF_QUALIFIED, GF_SIMPLE, SIMPLE, base_name,
+    key, food_terms, mentions, screen,
 )
-from recipe_agent import discover, fetch, household
+from happiness import household_happiness, score_recipe
 
 
-def propose_recipes(get=fetch):
-    seen = set()
-    for batch in discover(get):
-        for row in batch:
-            meal_id = str(row.get('idMeal') or '')
-            if meal_id.isdigit() and meal_id not in seen:
-                seen.add(meal_id)
-                yield row
+def normalize_recipe(row):
+    """Validate one external MealDB record before any string operations."""
+    if not isinstance(row, dict):
+        raise ValueError('Recipe record must be an object.')
+    raw_id = row.get('idMeal')
+    if isinstance(raw_id, bool) or not isinstance(raw_id, (str, int)) or not str(raw_id).isdigit():
+        raise ValueError('Recipe ID is missing or invalid.')
+    for field in ('strMeal', 'strInstructions'):
+        if not isinstance(row.get(field), str) or not row[field].strip():
+            raise ValueError('Recipe title or instructions are missing or invalid.')
+    optional = {}
+    for field in ('strCategory', 'strArea', 'strMealThumb'):
+        value = row.get(field)
+        if value is not None and not isinstance(value, str):
+            raise ValueError('Recipe metadata must be text.')
+        optional[field] = (value or '').strip()
+    ingredients = []
+    for index in range(1, 21):
+        name = row.get(f'strIngredient{index}')
+        if name is None:
+            continue
+        if not isinstance(name, str):
+            raise ValueError('Recipe ingredient names must be text.')
+        if not name.strip():
+            continue
+        measure = row.get(f'strMeasure{index}')
+        if measure is not None and not isinstance(measure, str):
+            raise ValueError('Recipe ingredient measures must be text.')
+        ingredients.append({'name': name.strip(), 'measure': (measure or '').strip()})
+    if not ingredients:
+        raise ValueError('Recipe has no ingredients.')
+    title, instructions = row['strMeal'].strip(), row['strInstructions'].strip()
+    return {
+        'id': str(raw_id), 'title': title, 'instructions': instructions,
+        'category': optional['strCategory'], 'area': optional['strArea'],
+        'photo': optional['strMealThumb'], 'ingredients': ingredients,
+        'names': [key(item['name']) for item in ingredients],
+        'text': key(' '.join([title, instructions] + [
+            item['measure'] + ' ' + item['name'] for item in ingredients
+        ])),
+    }
 
 
-def _ingredients(row):
-    return [
-        {'name': name.strip(), 'measure': str(row.get(f'strMeasure{i}') or '').strip()}
-        for i in range(1, 21)
-        if isinstance(name := row.get(f'strIngredient{i}'), str) and name.strip()
-    ]
-
-
-def validate_recipe(row, people):
-    ingredients = _ingredients(row)
-    title = row.get('strMeal') or ''
-    instructions = row.get('strInstructions') or ''
-    if not title or not instructions or not ingredients:
-        return {'status': 'unsafe', 'reasons': ['Incomplete recipe data.'], 'ingredients': ingredients}
-    names = [key(item['name']) for item in ingredients]
-    text = key(' '.join([title, instructions] + [
-        item['measure'] + ' ' + item['name'] for item in ingredients
-    ]))
+def _validate_normalized(recipe, people):
+    ingredients, names, text = recipe['ingredients'], recipe['names'], recipe['text']
+    category = recipe['category']
     reasons = []
     for person in people:
         for allergy in person['allergies']:
-            # Report known matches; screen() remains the final authoritative rule.
-            from diet_rules import GROUPS
             term = key(allergy)
-            family = ALIASES.get(term)
-            if mentions(text, GROUPS.get(family, set()) | {term}):
+            if mentions(text, GROUPS.get(ALIASES.get(term), set()) | {term}):
                 reasons.append(f"{person['name']}: allergy conflict with {allergy}.")
         for avoided in person['avoid']:
-            if mentions(text, {key(avoided)}):
+            if mentions(text, food_terms(avoided)):
                 reasons.append(f"{person['name']}: always-excluded ingredient {avoided}.")
-    if not screen(people, names, str(row.get('strCategory') or ''), text):
-        if not reasons:
-            reasons.append('Recipe conflicts with a household dietary restriction.')
+    if not screen(people, names, category, text) and not reasons:
+        reasons.append('Recipe conflicts with a household dietary restriction.')
     if reasons:
         return {'status': 'unsafe', 'reasons': reasons, 'ingredients': ingredients}
 
     checks = []
-    unsupported = sorted({a for p in people for a in p['allergies'] if key(a) not in ALIASES})
+    diets = {person['diet'] for person in people}
+    unsupported = sorted({allergy for person in people for allergy in person['allergies']
+                          if key(allergy) not in ALIASES})
     if unsupported:
         checks.append('Unrecognized allergy terms require verification: ' + ', '.join(unsupported))
-    if any(p['allergies'] for p in people):
-        unknown = [item['name'] for item, n in zip(ingredients, names) if base_name(n) not in SIMPLE]
+    if any(person['allergies'] for person in people):
+        unknown = [item['name'] for item, name in zip(ingredients, names) if base_name(name) not in SIMPLE]
         if unknown:
             checks.append('Verify packaged ingredient composition and labels: ' + ', '.join(unknown))
-    diets = {p['diet'] for p in people}
     if 'Gluten Free' in diets:
-        unknown = [item['name'] for item, n in zip(ingredients, names)
-                   if base_name(n) not in GF_SIMPLE and not GF_QUALIFIED.fullmatch(n)]
+        unknown = [item['name'] for item, name in zip(ingredients, names)
+                   if base_name(name) not in GF_SIMPLE and not GF_QUALIFIED.fullmatch(name)]
         if unknown:
             checks.append('Verify gluten-free composition: ' + ', '.join(unknown))
     if diets.intersection({'Vegan', 'Vegetarian', 'Pescatarian'}):
-        category = str(row.get('strCategory') or '')
         accepted = {'Vegan'} if 'Vegan' in diets else {'Vegan', 'Vegetarian'}
         if diets.isdisjoint({'Vegan', 'Vegetarian'}):
             accepted.add('Seafood')
-        if category not in accepted and any(base_name(n) not in SIMPLE for n in names):
+        if category not in accepted and any(base_name(name) not in SIMPLE for name in names):
             checks.append('Verify prepared ingredients for dietary restrictions.')
     return {'status': 'needs_review' if checks else 'safe',
             'reasons': checks, 'ingredients': ingredients}
 
 
+def validate_recipe(row, people):
+    """Public raw-record validator, using the same path as live recommendations."""
+    try:
+        recipe = normalize_recipe(row)
+    except ValueError as exc:
+        return {'status': 'invalid', 'reasons': [str(exc)], 'ingredients': []}
+    return _validate_normalized(recipe, people)
+
+
+def _score_normalized(recipe, people):
+    reasons, scores = score_recipe(people, [name.split() for name in recipe['names']])
+    coverage = sum(bool(reason['matched']) for reason in reasons) / len(people) if people else 0.0
+    return {'happiness': household_happiness(scores, coverage), 'roommate_scores': reasons,
+            'scores': scores, 'coverage': coverage}
+
+
 def evaluate_happiness(row, people):
-    ingredients = _ingredients(row)
-    tokens = [key(item['name']).split() for item in ingredients]
-    reasons, scores = score_recipe(people, tokens)
-    return {'happiness': household_happiness(scores), 'roommate_scores': reasons}
+    """Direct scoring helper, using the single canonical formula."""
+    return _score_normalized(normalize_recipe(row), people)
 
 
-def choose_recipe(request, get=fetch, max_attempts=50, max_results=12):
-    
-    if (isinstance(max_attempts, bool)
-            or not isinstance(max_attempts, int)
-            or max_attempts < 1):
-        raise ValueError("max_attempts must be a positive integer.")
+def evaluate_candidate(row, people):
+    """The active evaluator: normalize, screen, then score a retrieved candidate."""
+    try:
+        recipe = normalize_recipe(row)
+    except ValueError as exc:
+        return {'status': 'invalid', 'reasons': [str(exc)], 'recipe': None}
+    validation = _validate_normalized(recipe, people)
+    if validation['status'] == 'unsafe':
+        return dict(validation, recipe=None)
+    score = _score_normalized(recipe, people)
+    card = {name: recipe[name] for name in (
+        'id', 'title', 'category', 'area', 'photo', 'ingredients', 'instructions'
+    )}
+    card.update(happiness=score['happiness'], reasons=score['roommate_scores'],
+                roommate_scores=score['roommate_scores'], review_notes=validation['reasons'],
+                verification_status=validation['status'], prior_rating=None, url='https://www.themealdb.com/meal/' + recipe['id'])
+    return dict(validation, recipe=card, scores=score['scores'], coverage=score['coverage'])
 
-    if (isinstance(max_results, bool)
-            or not isinstance(max_results, int)
-            or max_results < 1):
-        raise ValueError("max_results must be a positive integer.")
 
-    people = household(request)
+def choose_recipe(request, get=None, max_attempts=None, max_results=12):
+    """Compatibility endpoint: delegate retrieval/ranking to the shared pipeline.
 
-    rejected = []
-    safe_recipes = []
-    attempts = 0
-
-    # Agent 1 provides different recipe proposals
-    for row in propose_recipes(get):
-
-        if attempts >= max_attempts:
-            break
-
-        attempts += 1
-
-        # Agent 2 validates the proposed recipe
-        validation = validate_recipe(row, people)
-
-        # Reject unsafe or uncertain recipes
-        if validation["status"] != "safe":
-            rejected.append({
-                "id": str(row["idMeal"]),
-                "title": row.get("strMeal"),
-                "status": validation["status"],
-                "reasons": validation["reasons"]
-            })
-            continue
-
-        # Calculate happiness only for accepted recipes
-        score = evaluate_happiness(row, people)
-
-        # Build the recipe object
-        recipe = {
-            "id": str(row["idMeal"]),
-            "title": row["strMeal"],
-            "category": row.get("strCategory"),
-            "area": row.get("strArea"),
-            "photo": row.get("strMealThumb"),
-            "ingredients": validation["ingredients"],
-            "instructions": row["strInstructions"],
-            "url": (
-                "https://www.themealdb.com/meal/"
-                + str(row["idMeal"])
-            ),
-            "happiness": score["happiness"],
-            "reasons": score["roommate_scores"],
-            "roommate_scores": score["roommate_scores"],
-            "review_notes": [],
-            "prior_rating": None
-        }
-
-        # Retain the recipe for comparison
-        safe_recipes.append(recipe)
-
-    # Rank every safe recipe by household happiness
-    def sort_key(recipe):
-        scores = [
-            p["happiness"] / 100
-            for p in recipe["roommate_scores"]
-            if any(
-                pref["strength"] > 0
-                for person in people
-                if person["name"] == p["name"]
-                for pref in person["preferences"]
-            )
-        ]
-
-        if not scores:
-            scores = [0.0]
-
-        return ranking_key(
-            scores,
-            recipe["title"],
-            recipe["id"]
-        )
-
-    safe_recipes.sort(key=sort_key)
-
-    # Return the highest-ranked recipes
-    selected = safe_recipes[:max_results]
-
-    if selected:
-        return {
-            "status": "proposed",
-            "attempts": attempts,
-            "rejected": rejected,
-            "recipes": selected,
-            "recipe": selected[0],
-            "review_recipes": [],
-            "excluded_by_rules": len(rejected),
-            "message": (
-                f"Found {len(safe_recipes)} recipes that passed "
-                "automated screening. Check labels and "
-                "cross-contact before serving."
-            )
-        }
-
-    return {
-        "status": "no_verified_recipe",
-        "attempts": attempts,
-        "rejected": rejected,
-        "recipes": [],
-        "recipe": None,
-        "review_recipes": [],
-        "excluded_by_rules": len(rejected),
-        "message": (
-            "No recipe passed automated screening "
-            "within the search limit."
-        )
-    }
-
+    With the same limits, /evaluate and /recommend return the same recipes and
+    fit scores. The legacy singular recipe field always excludes review items.
+    """
+    # Imported only when called, so the agent can import evaluate_candidate.
+    from recipe_agent import fetch, recommend
+    result = recommend(request, get=fetch if get is None else get,
+                       max_attempts=max_attempts, max_results=max_results)
+    result['recipe'] = result['recipes'][0] if result['recipes'] else None
+    if result['status'] == 'no_match':
+        result['status'] = 'no_verified_recipe'
+    return result

@@ -18,7 +18,7 @@ class AgentTwoTests(unittest.TestCase):
         self.assertEqual(result['recipe']['id'], '2')
         self.assertEqual(result['attempts'], 2)
         self.assertEqual(result['rejected'][0]['id'], '1')
-        self.assertEqual(result['recipe']['happiness'], 100)
+        self.assertEqual(result['recipe']['happiness'], 71)
 
     def test_uncertain_food_is_not_accepted(self):
         rows = [meal(1, ['mystery sauce', 'rice']), meal(2, ['rice'])]
