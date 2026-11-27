@@ -10,6 +10,8 @@ import webbrowser
 
 from recipe_agent import ProviderError, recommend
 from recipe_evaluator import choose_recipe
+from preference_agent import AIError, parse_preferences
+from config import public_ai_status
 
 WEB = Path(__file__).resolve().parent / "web"
 
@@ -28,12 +30,21 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     
+    def do_GET(self):
+        if self.path == '/api/ai-status':
+            return self.reply(200, public_ai_status())
+        return super().do_GET()
+
     def do_POST(self):
-        # Accept requests for either Agent 1 or Agent 2
-        if self.path not in ("/api/recommend", "/api/evaluate"):
+        # Route preference extraction and the two existing recipe endpoints.
+        if self.path not in ("/api/recommend", "/api/evaluate", "/api/parse-preferences"):
             return self.reply(404, {
                 "message": "Unknown endpoint."
             })
+
+        origin = self.headers.get("Origin")
+        if origin and origin != "http://" + self.headers.get("Host", ""):
+            return self.reply(403, {"message": "Use the RMR app tab to send requests."})
 
         # Require JSON input
         if self.headers.get_content_type() != "application/json":
@@ -52,22 +63,24 @@ class Handler(SimpleHTTPRequestHandler):
             # Read household data from frontend
             data = json.loads(self.rfile.read(size))
 
-            # AGENT 1: Existing recommendation endpoint
-            if self.path == "/api/recommend":
+            # Natural-language draft extraction, then existing recipe routes.
+            if self.path == "/api/parse-preferences":
+                result = parse_preferences(data)
+            elif self.path == "/api/recommend":
                 result = recommend(data)
 
-            # AGENT 2: New evaluation endpoint
+            # Compatibility route into the same candidate/evaluator pipeline
             elif self.path == "/api/evaluate":
-                result = choose_recipe(
-                    data,
-                    max_attempts=50,
-                    max_results=12
-                )
+                result = choose_recipe(data)
 
         except ValueError as exc:
             return self.reply(400, {
                 "message": str(exc)
             })
+
+        except AIError as exc:
+            return self.reply(exc.status, {"message": str(exc), "code": exc.code,
+                                           "retry_after": exc.retry_after})
 
         except ProviderError as exc:
             return self.reply(502, {

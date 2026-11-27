@@ -12,6 +12,7 @@ EQUIVALENTS = {
     "coriander": "cilantro",
     "chilli": "chili",
     "tomato": "tomatoe",
+    "shrimp": "prawn",
     "bell pepper": "capsicum",
 }
 ALIASED_WORDS = {v:k for k, vs in EQUIVALENTS.items() for v in vs.split("|")}
@@ -100,6 +101,23 @@ def base_name(name):
 def mentions(text, terms):
     padded = " " + text + " "
     return any(" " + term + " " in padded for term in terms)
+
+
+# These labels explicitly describe categories. A specific member such as salmon
+# or cheddar does not expand to its entire allergen family for taste/exclusions.
+GENERIC_FOOD_GROUPS = {
+    'fish': GROUPS['fish'], 'shellfish': GROUPS['shellfish'],
+    'seafood': GROUPS['seafood'], 'dairy': GROUPS['milk'],
+    'nut': GROUPS['nuts'], 'tree nut': GROUPS['tree nut'],
+    'gluten': GROUPS['gluten'],
+    'cheese': vocabulary('cheese|cheddar|mozzarella|feta|parmesan|parmigiano reggiano|ricotta|mascarpone|halloumi|pecorino'),
+}
+
+
+def food_terms(term):
+    """Expand an explicit food category or preserve a specific ingredient."""
+    term = key(term)
+    return GENERIC_FOOD_GROUPS.get(term, set()) | {term}
 
 
 def screen(people, names, category, recipe_text):

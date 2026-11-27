@@ -1,0 +1,2 @@
+# RMR uses only the Python standard library. No pip packages required.
+# Gemini is called via HTTPS REST using a private server-side API key.

@@ -1,121 +1,125 @@
 # RMR — Roommate Meal Resolutions
 
-On Windows, extract the ZIP and double-click **Start RMR.cmd**. Alternatively run `py main.py` from the extracted folder. On macOS or Linux use `python3 main.py`. Requires Python 3.9+ and internet access. Leave the terminal open while using the app. If a browser tab does not open, use the local URL printed in the terminal (usually http://127.0.0.1:8765). Stop a previous copy with Ctrl+C before starting this version to reuse the same port and browser saves.
+RMR recommends meals for households with different tastes, diets, and ingredient restrictions. Gemini interprets written preferences and dish names; TheMealDB supplies recipes. Recommendations use a shared scoring system that considers preference coverage, individual fit, and household ratings.
 
-## Find meals
+## Requirements
 
-Enter each roommate’s name, diet, ingredient taste preferences, allergies, and ingredients to always exclude. Choose neutral, like, or strong like. A matched neutral ingredient adds a modest amount of fit; an absent neutral ingredient does not lower the score. **Find recipes** opens a separate screen. Results show household and per-roommate fit scores with colors. A roommate with no matching preferences in a recipe shows “Not scored”; that missing match lowers household happiness. Use **Ingredients to verify** to inspect uncertain ingredients. Use **Edit household** to change preferences. Household entries autosave to this browser. **Save favorite** adds a MealDB bookmark to the **Saved recipes** sidebar on the household screen. You can also rate a recipe after trying it; ratings are stored in this browser separately from bookmarks and can influence future ordering. Use the same browser profile, address and port to restore saves. The original household and favorite browser keys preserve data across the RMR rename.
+- Python 3.9 or later
+- A current web browser
+- Internet access
+- A Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)
 
-## How search works
+The application uses Python's standard library. No Python packages or local AI model downloads are required.
 
-RMR retrieves full MealDB recipe records in batches of four first-letter requests, filtering as it goes. It continues until it has enough eligible recipes and some unrated options, or has requested all 26 letters. A recipe ID is considered once. The response shows up to 12 ranked matches and up to 12 separate review candidates. Matched preferences raise a roommate’s score, stronger preferences count more, and very long preference lists get a small adjustment to avoid overfitting. Recipes with matches for more roommates rank first. Unmatched roommates show “Not scored” personally, but their missing match lowers the household score; the least-satisfied roommate still has extra weight. Personal and household happiness scores cap at 90%. “Always exclude” entries, allergies, and diet rules are hard screening rules. Household ratings provide additional feedback, while some unrated choices remain available for discovery. Exact scoring weights are not shown in the user interface.
+## Setup
 
-Names are normalized for case, accents, punctuation and common plurals. A curated vocabulary handles variants including eggplant, egg plant, aubergine, brinjal, berenjena, melanzana, patlıcan and baingan. The agent checks the title, ingredient names, measures and instructions. A conflict in any of them removes the recipe before ranking. This dictionary covers named equivalents; it is not a general translator. See EQUIVALENTS in diet_rules.py to add vocabulary.
+Create a Gemini API key, then open a terminal in the project folder containing `main.py`.
 
-## Rules used by the app
+**Windows:**
 
-| Diet | Screening rule |
-| --- | --- |
-| Any | Apply the household’s dislikes and allergy checks. |
-| Vegetarian | Exclude recognized land meat, seafood, gelatin and rennet. Permit eggs and dairy. Screen ingredients even when the category says Vegetarian. |
-| Vegan | Apply vegetarian exclusions plus recognized dairy, eggs and honey. Recognize common plant alternatives such as coconut milk. |
-| Pescatarian | Permit fish, shellfish, eggs, dairy and plant foods. Exclude recognized land meats and their stocks. |
-| Mediterranean | Use a meal-level approximation. Require two groups among vegetables, legumes, whole grains, olives/olive oil, fish/shellfish and tree nuts, including at least one of the first three. Screen out listed red or processed meat. |
-| Gluten Free | Screen recipe text for wheat, barley, rye, malt and common derivatives. Exclude ordinary bread, pasta and unlabeled oats. Recognize qualified forms such as rice flour and gluten-free oats. If the composition of another ingredient is uncertain, show it for label review. |
-
-Vegetarian, vegan and pescatarian searches also consider meals in general categories such as Side. Uncertain ingredients outside a diet-compatible category trigger review. Multiple roommates’ rules apply together. Recognized allergens and listed aliases are hard exclusions. When an allergy term has no established family rule, literal conflicts are removed and remaining candidates require review. Ingredient screening cannot verify packaged labels or kitchen cross-contact. A qualified gluten-free ingredient can still conflict with a separate wheat allergy.
-
-## Sources and maintenance
-
-- Gluten-free foods and label checks: https://celiac.org/gluten-free-living/gluten-free-foods/
-- Plant-based diets: https://www.vegansociety.com/go-vegan/definition-veganism
-- Pescatarian diet: https://health.clevelandclinic.org/pescatarian-diet
-- Mediterranean eating pattern: https://www.heart.org/en/healthy-living/healthy-eating/eat-smart/nutrition-basics/mediterranean-diet
-- Eggplant terminology: https://dictionary.cambridge.org/dictionary/english/aubergine
-- MealDB educational API and first-letter endpoint: https://www.themealdb.com/api.php
-
-## Team integration
-
-The Recipe Agent is the recommendation component inside RMR. Import `recommend` from `recipe_agent.py` or POST JSON to /api/recommend, for example:
-
-```json
-{"roommates":[{"name":"Mike","diet":"Gluten Free","likes":["rice"],"avoid":["eggplant"],"allergies":[]}]}
+```powershell
+Copy-Item .env.example .env
+notepad .env
 ```
 
-The response includes status, recipes, review_recipes, and excluded_by_rules. Each review card explains the specific checks still needed. Run `py -m unittest -v` from the project folder to check the screening and retrieval regressions.
+**macOS/Linux:**
 
-## Replace the Docker stand-in on dev
+```sh
+cp .env.example .env
+```
 
-These PowerShell steps use a fresh checkout so local work in any existing clone stays intact. You need Git, GitHub write access or a pull request, and the extracted RMR folder. The folder you copy from should contain main.py, README.md and web directly.
+Edit `.env` and replace the key placeholder:
 
-1. Clone the team's dev branch in a parent directory of your choice.
+```dotenv
+GEMINI_API_KEY=your_api_key
+GEMINI_MODEL=gemini-3.5-flash-lite
+GEMINI_TIMEOUT_SECONDS=45
+```
 
-   ```powershell
-   git clone --branch dev https://github.com/Skully2018/CSC-4240-T8.git RMR-dev
-   cd RMR-dev
-   git status --short --branch
-   ```
+Keep `.env` beside `main.py`, outside `web/`. Do not overwrite an existing configuration or commit the file to Git.
 
-   Expect dev tracking origin/dev. If the clone reports that dev does not exist, check the branch name with your team.
+For free-tier use, select an eligible Google project without billing enabled. Availability and quotas depend on Google's policies and your account. See [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing).
 
-2. Set the source path and check that you selected the right folder. Replace the example path if needed.
+## Run
 
-   ```powershell
-   $rmrSource = "$env:USERPROFILE\Downloads\RMR"
-   Get-ChildItem -LiteralPath $rmrSource
-   ```
+**Windows:**
 
-3. Inspect the tracked setup files. The uploaded project used Dockerfile, compose.yaml, recipe_kb.sql and requirements.txt exclusively for the stand-in. If the current dev branch uses any of them for another component, retain that file. Otherwise run the removal command below. Git retains their history.
+```powershell
+py -3 main.py
+```
 
-   ```powershell
-   git ls-files
-   git rm --ignore-unmatch -- Dockerfile compose.yaml recipe_kb.sql requirements.txt
-   ```
+You can also double-click `Start RMR.cmd`.
 
-4. Normalize the old ReadMe.md spelling if present and copy the release into the repository root. This keeps the repository's .git folder, .gitignore and unrelated files intact. Review any overlapping work on dev when you inspect the diff.
+**macOS/Linux:**
 
-   ```powershell
-   if ((git ls-files) -ccontains 'ReadMe.md') {
-       git mv ReadMe.md rmr-readme-temp.md
-       git mv rmr-readme-temp.md README.md
-   }
-   $rmrFiles = 'README.md','Start RMR.cmd','main.py','recipe_agent.py','diet_rules.py','test_diets.py'
-   foreach ($name in $rmrFiles) {
-       Copy-Item -LiteralPath (Join-Path $rmrSource $name) -Destination . -Force
-   }
-   New-Item -ItemType Directory -Force web | Out-Null
-   foreach ($name in 'index.html','style.css','app.js') {
-       Copy-Item -LiteralPath (Join-Path $rmrSource "web\$name") -Destination web -Force
-   }
-   ```
+```sh
+python3 main.py
+```
 
-5. Test the checkout and inspect the staged change. In the app, generate a recipe, save a favorite, and return to the household screen to check the sidebar. Press Ctrl+C to stop.
+The browser opens automatically. If it does not, use the address printed in the terminal, usually `http://127.0.0.1:8765`. Keep the terminal open while using the app; press Ctrl+C to stop it.
 
-   ```powershell
-   py -m unittest -v
-   py main.py
-   git add -- README.md "Start RMR.cmd" main.py recipe_agent.py diet_rules.py test_diets.py web/index.html web/style.css web/app.js
-   git diff --cached --stat
-   git diff --cached
-   ```
+## Usage
 
-6. Commit and push once the diff contains the intended changes. If Git rejects a push because dev moved, fetch and reconcile the new commits before retrying. If dev requires pull requests, push your existing commit to a topic branch and open a pull request with dev as its base.
+Enter a household description, for example:
 
-   ```powershell
-   git commit -m "Replace Docker stand-in with RMR roommate meal app"
-   git push origin dev
-   ```
+> Dave likes cheeseburgers and salmon but dislikes broccoli. Jordan likes mozzarella sticks and potatoes, dislikes mushrooms, and is allergic to shellfish.
 
-   For a protected dev branch:
+Click **Find meals with AI**. RMR extracts preferences, infers core dish ingredients, and searches automatically. Unresolved questions pause the search. Use **Edit interpreted household** to correct profiles or **Enter preferences manually** to bypass Gemini.
 
-   ```powershell
-   git switch -c rmr-ui-integration
-   git push -u origin rmr-ui-integration
-   ```
+Dish ingredients are inferred automatically; optional toppings are not assumed. Explicit ingredient preferences take precedence over inferences. Dislikes and allergies are exclusions. Supported diets are Any, Vegetarian, Vegan, Mediterranean, Pescatarian, and Gluten Free, with one diet per person.
 
-## Handoff for the next UX/UI developer
+Results appear in one ranked list. Ingredient label-check notes remain attached to the relevant meals. Known restriction conflicts are excluded. Fit scores are heuristic preference matches, not safety guarantees; check ingredient labels and cross-contact when preparing food for someone with allergies.
 
-Two proposed features extend the current ranking. Both are future work.
+Save recipes in the sidebar and rate meals after trying them. Ratings influence later recommendations. Budget, cooking time, calories, and equipment constraints are not enforced.
 
-- **Ingredient preference strength.** Give each ingredient a labeled slider or numeric selector from −2 (strong dislike) through 0 (neutral) to +2 (strong like). Keep a separate “Always exclude” control. Preserve existing saved dislikes as exclusions during migration and keep allergies and diet rules mandatory. Apply preference weights only to eligible recipes, and retain the least-satisfied-roommate ranking so one enthusiastic rating cannot dominate the household.
-- **Rate a recipe after trying it.** Offer an optional 1–5 rating beside each result or saved recipe. Store the MealDB recipe ID, a stable roommate or household ID, score and timestamp. Let people revise or remove a rating. Use prior feedback as a small ranking adjustment after hard exclusions. Give unrated meals a neutral starting point and keep a few unfamiliar options in the results. Keep bookmarks separate from ratings so saving a dish to try does not count as liking it.
+## Configuration and storage
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `GEMINI_API_KEY` | Required for AI input | Private server-side API key |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Model; `gemini-3.1-flash-lite` is also supported |
+| `GEMINI_TIMEOUT_SECONDS` | `45` | Request timeout, from 5 to 180 seconds |
+
+Environment variables override `.env`. File changes take effect on the next request. The app does not automatically retry failed requests or switch models.
+
+Household profiles, bookmarks, and ratings are stored in the browser. Use the same browser profile, address, and port to access saved data. There is no shared database or account synchronization.
+
+Descriptions are sent to Google's Gemini API. The API key stays on the Python server. Raw descriptions are not saved by the browser application; evaluation reports do contain their test inputs and outputs. Review the [Gemini API terms](https://ai.google.dev/gemini-api/terms) before submitting sensitive information.
+
+## Tests and evaluation
+
+Run the automated tests from the project folder:
+
+```powershell
+py -3 -m unittest -v
+```
+
+On macOS/Linux, use `python3` instead of `py -3`. Tests use controlled provider responses and do not require a key or internet access.
+
+To evaluate extraction against the 24 development cases using your API key:
+
+```powershell
+py -3 evaluate_extraction.py --interval 7 --output evaluation/results.json
+```
+
+Results include extracted profiles, comparison checks, and response times. Adjust request spacing to your quota. These cases are a development set; use separate examples for an independent evaluation.
+
+## Troubleshooting
+
+**Check setup** reports local configuration only. It does not verify API access or remaining quota.
+
+Check model access without generating text:
+
+```powershell
+py -3 diagnose_gemini.py
+```
+
+Test one extraction request:
+
+```powershell
+py -3 diagnose_gemini.py --extract
+```
+
+For a missing key, check the `.env` filename and environment overrides. For quota errors, check usage in AI Studio and wait for the relevant limit to reset. Manual entry remains available. Recipe-provider errors require access to TheMealDB independently of Gemini.
+
+See [IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md) for module descriptions, API behavior, scoring details, and optional browser checks.
